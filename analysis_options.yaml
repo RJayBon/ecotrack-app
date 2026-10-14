@@ -1,0 +1,43 @@
+# EcoTrack static analysis configuration.
+#
+# This file was MISSING from the repo. `flutter_lints` was declared in
+# pubspec.yaml but never activated, so `flutter analyze` was running with
+# the default (much weaker) rule set. With this file present, run:
+#
+#     flutter analyze
+#
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # Treat these as hard errors, not warnings - they are real bugs.
+    use_build_context_synchronously: error
+    unawaited_futures: error
+    # Dead/pointsless code should never silently ship.
+    dead_code: error
+
+  language:
+    strict-casts: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    # Correctness
+    always_declare_return_types: true
+    avoid_single_cascade_in_expression_statements: true
+    cancel_subscriptions: true
+    close_sinks: true
+    prefer_final_locals: true
+    unawaited_futures: true
+    use_build_context_synchronously: true
+
+    # Async / lifecycle hygiene
+    avoid_void_async: true
+
+    # Clarity
+    prefer_single_quotes: true
+    unnecessary_lambdas: true
+    unnecessary_parenthesis: true
+
+    # Public API docs for the DB layer and models
+    slash_for_doc_comments: true

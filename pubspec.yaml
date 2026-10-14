@@ -1,0 +1,93 @@
+name: ecotrack
+description: EcoTrack - Waste management, recycling education & eco habits tracker.
+publish_to: 'none'
+version: 1.0.0+1
+
+# NOTE: the Flutter constraint below is REQUIRED, not cosmetic.
+# This app uses Color.withValues(), CardThemeData and DialogThemeData
+# (all introduced in Flutter 3.27). Without this line `flutter pub get`
+# resolves happily on an older SDK and then fails with confusing
+# widget-level compile errors instead of telling you to upgrade.
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # SQLite. `sqflite` is the native Android/iOS/macOS implementation.
+  sqflite: ^2.3.3+1
+
+  # SQLite for Windows/Linux desktop AND for unit tests. Dart FFI based.
+  # Range (not ^) deliberately: allows the 2.x and 3.x lines so `pub get`
+  # can pick whatever is compatible with the SDK you actually have.
+  sqflite_common_ffi: '>=2.3.0 <4.0.0'
+
+  # SQLite for Flutter web (sqlite3 compiled to wasm).
+  # Requires a one-time asset setup step - see README.md.
+  sqflite_common_ffi_web: '>=0.4.0 <2.0.0'
+
+  path: ^1.9.0
+  crypto: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  # Generates every platform launcher-icon size from one source PNG.
+  # Run `dart run flutter_launcher_icons` after changing the source image.
+  # See the "App icon" section in README.md.
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+
+  # The app-icon source. Declared here as an asset so the same PNG can also
+  # be used inside the app (Image.asset('assets/icon/app_icon.png')), not
+  # just as the launcher icon. If you only ever want it as the launcher
+  # icon, this block can be removed.
+  assets:
+    - assets/icon/app_icon.png
+
+  # NOTE: you asked for no external fonts, so fontFamily is not pinned in
+  # the theme. If you ever want true cross-platform Roboto, drop the .ttf
+  # files in assets/fonts/ and declare them here:
+  #
+  # fonts:
+  #   - family: Roboto
+  #     fonts:
+  #       - asset: assets/fonts/Roboto-Regular.ttf
+
+# ---------------------------------------------------------------------------
+# App-icon generation.
+#
+# One 1024x1024 source PNG in assets/icon/, every platform size out.
+# Re-run `dart run flutter_launcher_icons` after any change to the source
+# image, then `flutter clean && flutter run` (icons are baked in at build
+# time - hot reload does not pick them up).
+# ---------------------------------------------------------------------------
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+
+  # iOS rejects icons that contain an alpha channel. Rather than erroring
+  # out, flatten transparency onto a solid backdrop for you.
+  remove_alpha_ios: true
+
+  # --- Optional: Android 8+ adaptive icon (parallax / themed) -----------
+  # Provide a second 1024x1024 PNG with the glyph inside the centre 66%
+  # safe zone at assets/icon/app_icon_foreground.png, then uncomment both
+  # lines and re-run the generator.
+  # adaptive_icon_background: "#2E7D32"        # AppColors.primary
+  # adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+
+  # --- Optional: web favicon + PWA icons --------------------------------
+  # web:
+  #   generate: true
+  #   image_path: "assets/icon/app_icon.png"
+  #   background_color: "#2E7D32"
+  #   theme_color: "#2E7D32"
