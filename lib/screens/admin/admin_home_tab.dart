@@ -91,8 +91,14 @@ class _AdminHomeTabState extends State<AdminHomeTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Welcome back, ${widget.admin.name.split(' ').first}',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textDark)),
+            // `firstName()` instead of a bare `name.split(' ').first`: the
+            // inline version throws on an empty name and renders
+            // "Welcome back, " for a whitespace-only one.
+            Text('Welcome back, ${firstName(widget.admin.name)}',
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textDark)),
             const SizedBox(height: 4),
             const Text('Here is what is happening across EcoTrack today.',
                 style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
@@ -118,22 +124,36 @@ class _AdminHomeTabState extends State<AdminHomeTab> {
               ),
             ],
             const SizedBox(height: 18),
-           GridView(
-  shrinkWrap: true,
-  physics: const NeverScrollableScrollPhysics(),
-  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-    crossAxisCount: 2,
-    mainAxisSpacing: 12,
-    crossAxisSpacing: 12,
-    mainAxisExtent: 112, // fixed height → no overflow
-  ),
-  children: [
-    StatTile(icon: Icons.people, value: '${_stats['totalTenants']}', label: 'Total Tenants'),
-    StatTile(icon: Icons.person_pin_circle, value: '${_stats['activeTenants']}', label: 'Active Tenants', color: AppColors.accent),
-    StatTile(icon: Icons.eco, value: '${_stats['totalPoints']}', label: 'Total Eco Points'),
-    StatTile(icon: Icons.card_giftcard, value: '${_stats['rewardsRedeemed']}', label: 'Rewards Redeemed', color: AppColors.warning),
-  ],
-),
+            GridView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                mainAxisExtent: 112, // fixed height → no overflow
+              ),
+              children: [
+                StatTile(
+                  icon: Icons.people,
+                  value: '${_stats['totalTenants']}',
+                  label: 'Total Tenants'),
+                StatTile(
+                  icon: Icons.person_pin_circle,
+                  value: '${_stats['activeTenants']}',
+                  label: 'Active Tenants',
+                  color: AppColors.accent),
+                StatTile(
+                  icon: Icons.eco,
+                  value: '${_stats['totalPoints']}',
+                  label: 'Total Eco Points'),
+                StatTile(
+                  icon: Icons.card_giftcard,
+                  value: '${_stats['rewardsRedeemed']}',
+                  label: 'Rewards Redeemed',
+                  color: AppColors.warning),
+              ],
+            ),
             if (_showNewTenants || _showRedemptions) ...[
               const SizedBox(height: 24),
               const Text('This Week',
@@ -189,7 +209,11 @@ class _AdminHomeTabState extends State<AdminHomeTab> {
               ),
             ],
             const SizedBox(height: 24),
-            const Text('Recent Activities', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textDark)),
+            const Text('Recent Activities',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textDark)),
             const SizedBox(height: 10),
             if (_recentActivity.isEmpty)
               const EcoCard(
@@ -223,7 +247,11 @@ class _AdminHomeTabState extends State<AdminHomeTab> {
                 ),
               ),
             const SizedBox(height: 24),
-            const Text('Recent Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textDark)),
+            const Text('Recent Notifications',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textDark)),
             const SizedBox(height: 10),
             if (_recentNotifications.isEmpty)
               const EcoCard(
@@ -245,8 +273,11 @@ class _AdminHomeTabState extends State<AdminHomeTab> {
                             backgroundColor: AppColors.avatarTint,
                             child: Icon(Icons.notifications, color: AppColors.primary, size: 20),
                           ),
-                          title: Text(n['title'] as String, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: Text('Sent to ${n['recipient_count']} tenant(s) · ${formatRelativeDate(n['created_at'] as String)}'),
+                          title: Text(n['title'] as String,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text('Sent to ${n['recipient_count']} '
+                              'tenant(s) · '
+                              '${formatRelativeDate(n['created_at'] as String)}'),
                         ),
                         if (i != _recentNotifications.length - 1) const Divider(height: 1),
                       ],

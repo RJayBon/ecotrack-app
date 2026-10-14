@@ -20,6 +20,11 @@ class _AdminActivitiesScreenState extends State<AdminActivitiesScreen> {
   /// revealed - and restored - from here.
   bool _showArchived = false;
 
+  /// True when the last load threw. Without it a database error rendered
+  /// "No activities yet", which reads as real (empty) data rather than a
+  /// failure - and the exception vanished into an unhandled async void.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -27,10 +32,19 @@ class _AdminActivitiesScreenState extends State<AdminActivitiesScreen> {
   }
 
   Future<void> _load() async {
-    final list = await DatabaseHelper.instance
-        .getActivities(includeArchived: _showArchived);
-    if (!mounted) return;
-    setState(() => _activities = list);
+    try {
+      final list = await DatabaseHelper.instance
+          .getActivities(includeArchived: _showArchived);
+      if (!mounted) return;
+      setState(() {
+        _activities = list;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Activity list load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
   Future<void> _openForm({EcoActivity? activity}) async {
@@ -56,17 +70,31 @@ class _AdminActivitiesScreenState extends State<AdminActivitiesScreen> {
       danger: true,
     );
     if (!confirmed) return;
-    await DatabaseHelper.instance.deleteActivity(a.id!);
-    if (!mounted) return;
-    showSuccessSnack(context, 'Activity archived.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.deleteActivity(a.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Activity archived.');
+      await _load();
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): an exception here escaped unhandled and the admin was
+      // left with no feedback at all - the row simply stayed where it was.
+      debugPrint('Archive activity failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not archive the activity.');
+    }
   }
 
   Future<void> _restore(EcoActivity a) async {
-    await DatabaseHelper.instance.restoreActivity(a.id!);
-    if (!mounted) return;
-    showSuccessSnack(context, 'Activity restored.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.restoreActivity(a.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Activity restored.');
+      await _load();
+    } catch (error, stackTrace) {
+      debugPrint('Restore activity failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not restore the activity.');
+    }
   }
 
   @override
@@ -92,7 +120,14 @@ class _AdminActivitiesScreenState extends State<AdminActivitiesScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Add Activity'),
       ),
-      body: _activities.isEmpty
+      body: _loadFailed
+          ? ErrorState(
+              title: 'Activities could not be loaded',
+              subtitle: 'The activity list could not be read from the local '
+                  'database. Please try again.',
+              onRetry: _load,
+            )
+          : _activities.isEmpty
           ? EmptyState(
               icon: Icons.directions_run,
               title: _showArchived ? 'Nothing archived' : 'No activities yet',
@@ -116,84 +151,89 @@ class _AdminActivitiesScreenState extends State<AdminActivitiesScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, i) {
                   final a = _activities[i];
+                  // DEFECT FIX (D3): this row used to be wrapped in
+                  // Opacity(opacity: archived ? 0.65 : 1). Opacity composites
+                  // the whole subtree onto the card; measured against the
+                  // 4.5:1 AA floor that gave 14.5px title 4.79:1 (pass),
+                  // 12.5px description 2.67:1 (fail), '+N pts' pill 2.53:1
+                  // (fail) and 'One-time'/'Archived' pills 2.52:1 (fail). So
+                  // archived rows - the ones an admin reads most carefully
+                  // before deciding to restore - were the least readable rows
+                  // on the screen. Archived state is now carried by colour
+                  // choice instead: textMuted on the white card is 5.34:1 and
+                  // EcoPill at AppColors.textTintAlpha is 4.63:1.
+                  final accent = a.archived ? AppColors.textMuted : AppColors.primary;
                   return EcoCard(
-                    child: Opacity(
-                      opacity: a.archived ? 0.65 : 1,
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: (a.archived
-                                    ? AppColors.textMuted
-                                    : AppColors.primary)
-                                .withValues(alpha: 0.12),
-                            child: Icon(
-                              iconFor(a.icon),
-                              color: a.archived
-                                  ? AppColors.textMuted
-                                  : AppColors.primary,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(a.title,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14.5)),
-                                const SizedBox(height: 2),
-                                Text(a.description,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 12.5,
-                                        color: AppColors.textMuted)),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    EcoPill('${a.points} pts'),
-                                    EcoPill(
-                                      a.repeatable ? 'Repeatable' : 'One-time',
-                                      color: AppColors.textMuted,
-                                    ),
-                                    EcoPill(a.category, color: AppColors.accent),
-                                    if (a.archived)
-                                      const EcoPill('Archived',
-                                          color: AppColors.textMuted),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: (v) {
-                              if (v == 'edit') {
-                                _openForm(activity: a);
-                              } else if (v == 'restore') {
-                                _restore(a);
-                              } else {
-                                _archive(a);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              if (!a.archived)
-                                const PopupMenuItem(
-                                    value: 'edit', child: Text('Edit')),
-                              if (a.archived)
-                                const PopupMenuItem(
-                                    value: 'restore', child: Text('Restore')),
-                              if (!a.archived)
-                                const PopupMenuItem(
-                                    value: 'archive',
-                                    child: Text('Archive')),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          backgroundColor:
+                              accent.withValues(alpha: AppColors.iconTintAlpha),
+                          child:
+                              Icon(iconFor(a.icon), color: accent, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(a.title,
+                                  style: TextStyle(
+                                      color: a.archived
+                                          ? AppColors.textMuted
+                                          : AppColors.textDark,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14.5)),
+                              const SizedBox(height: 2),
+                              Text(a.description,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 12.5,
+                                      color: AppColors.textMuted)),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  EcoPill('${a.points} pts', color: accent),
+                                  EcoPill(
+                                    a.repeatable ? 'Repeatable' : 'One-time',
+                                    color: AppColors.textMuted,
+                                  ),
+                                  EcoPill(a.category, color: AppColors.accent),
+                                  if (a.archived)
+                                    const EcoPill('Archived',
+                                        color: AppColors.textMuted),
+                                ],
+                              ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                        PopupMenuButton<String>(
+                          onSelected: (v) {
+                            if (v == 'edit') {
+                              _openForm(activity: a);
+                            } else if (v == 'restore') {
+                              _restore(a);
+                            } else {
+                              _archive(a);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            if (!a.archived)
+                              const PopupMenuItem(
+                                  value: 'edit', child: Text('Edit')),
+                            if (a.archived)
+                              const PopupMenuItem(
+                                  value: 'restore', child: Text('Restore')),
+                            if (!a.archived)
+                              const PopupMenuItem(
+                                  value: 'archive',
+                                  child: Text('Archive')),
+                          ],
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -269,14 +309,25 @@ class _ActivityFormSheetState extends State<_ActivityFormSheet> {
       archived: widget.activity?.archived ?? false,
       createdAt: widget.activity?.createdAt ?? '',
     );
-    if (_isEdit) {
-      await DatabaseHelper.instance.updateActivity(activity);
-    } else {
-      await DatabaseHelper.instance.insertActivity(activity);
+    try {
+      if (_isEdit) {
+        await DatabaseHelper.instance.updateActivity(activity);
+      } else {
+        await DatabaseHelper.instance.insertActivity(activity);
+      }
+      if (!mounted) return;
+      showSuccessSnack(
+          context, _isEdit ? 'Activity updated.' : 'Activity added.');
+      Navigator.pop(context, true);
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): a failed write left `_saving` true, so the sheet's
+      // button spun forever and the only escape was swiping the sheet away -
+      // silently discarding the admin's edits with no message.
+      debugPrint('Save activity failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not save the activity.');
     }
-    if (!mounted) return;
-    showSuccessSnack(context, _isEdit ? 'Activity updated.' : 'Activity added.');
-    Navigator.pop(context, true);
   }
 
   @override
@@ -295,15 +346,9 @@ class _ActivityFormSheetState extends State<_ActivityFormSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: AppColors.cardBorder,
-                        borderRadius: BorderRadius.circular(2)),
-                  ),
-                ),
+                // DEFECT FIX (E2): shared SheetHandle - this pill was
+                // hand-written in six sheets in two different colours.
+                const SheetHandle(),
                 const SizedBox(height: 16),
                 Text(_isEdit ? 'Edit Activity' : 'Add Activity',
                     style: const TextStyle(

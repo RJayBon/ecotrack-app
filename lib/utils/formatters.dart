@@ -1,10 +1,15 @@
-/// Date formatting helpers.
+/// Date and name formatting helpers.
 ///
-/// These three implementations were copy-pasted into three different screens
-/// before this file existed:
+/// The date helpers were copy-pasted into three different screens before this
+/// file existed:
 ///   * admin_home_tab.dart
 ///   * tenant_notifications_screen.dart   (relative variant)
 ///   * tenant_rewards_screen.dart         (absolute variant)
+///
+/// The name helpers were added later for the same reason: two screens did
+/// `name.split(' ').first` inline, which renders "Welcome back, " with an
+/// empty gap when the name is blank, and four more re-implemented the
+/// avatar-initial fallback by hand.
 library;
 
 /// "Just now", "5m ago", "3h ago", "2d ago", then "10/13/2026".
@@ -45,4 +50,26 @@ String formatFullDate(String iso) {
   final minute = d.minute.toString().padLeft(2, '0');
   final meridiem = d.hour < 12 ? 'AM' : 'PM';
   return '${months[d.month - 1]} ${d.day}, ${d.year} at $hour12:$minute $meridiem';
+}
+
+/// The first word of [fullName], for "Welcome back, Maria".
+///
+/// Returns [fallback] when the name is empty or only whitespace. Neither
+/// `admins.name` nor `tenants.name` carries a non-empty CHECK constraint in the
+/// schema, so a blank name is reachable and `split(' ').first` on it used to
+/// produce "Welcome back, " with a dangling gap.
+///
+/// Splits on any run of whitespace, so a name with a double space or a tab
+/// still yields a single word.
+String firstName(String fullName, {String fallback = 'there'}) {
+  final trimmed = fullName.trim();
+  if (trimmed.isEmpty) return fallback;
+  return trimmed.split(RegExp(r'\s+')).first;
+}
+
+/// A single uppercase initial for an avatar, or '?' when [fullName] is blank.
+String nameInitial(String fullName) {
+  final trimmed = fullName.trim();
+  if (trimmed.isEmpty) return '?';
+  return trimmed[0].toUpperCase();
 }

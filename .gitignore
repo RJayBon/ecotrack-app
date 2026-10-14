@@ -1,0 +1,120 @@
+# EcoTrack .gitignore
+#
+# This file was MISSING from the repository, so build output, IDE state and
+# per-machine Flutter scaffolding had nothing stopping them from being
+# committed. It follows the standard Flutter template plus the entries this
+# project specifically needs (see the "Project specific" section).
+
+# ---------------------------------------------------------------------------
+# Dart / Flutter build output
+# ---------------------------------------------------------------------------
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+coverage/
+
+# Generated platform artefacts that must never be hand-edited or committed
+# out of sync with a build.
+**/generated_plugin_registrant.dart
+
+# ---------------------------------------------------------------------------
+# Android
+# ---------------------------------------------------------------------------
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+*.jks
+*.keystore
+
+# ---------------------------------------------------------------------------
+# iOS / macOS
+# ---------------------------------------------------------------------------
+**/ios/**/*.mode1v3
+**/ios/**/*.mode2v3
+**/ios/**/*.moved-aside
+**/ios/**/*.pbxuser
+**/ios/**/*.perspectivev3
+**/ios/**/*sync/
+**/ios/**/.sconsign.dblite
+**/ios/**/.tags*
+**/ios/**/.vagrant/
+**/ios/**/DerivedData/
+**/ios/**/Icon?
+**/ios/**/Pods/
+**/ios/**/.symlinks/
+**/ios/**/profile
+**/ios/**/xcuserdata
+**/ios/.generated/
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+**/macos/Pods/
+
+# ---------------------------------------------------------------------------
+# Web
+# ---------------------------------------------------------------------------
+# `dart run sqflite_common_ffi_web:setup` generates these two files into web/.
+# They are large, machine-generated binaries/scripts, reproducible with one
+# command, and pinned to the resolved sqflite_common_ffi_web version - so they
+# are ignored rather than committed. See README.md -> "Running on the web".
+web/sqlite3.wasm
+web/sqflite_sw.js
+
+# ---------------------------------------------------------------------------
+# IDEs and editors
+# ---------------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*~
+
+# ---------------------------------------------------------------------------
+# OS cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Secrets and local environment
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Project specific
+# ---------------------------------------------------------------------------
+# ecotrack.iml was already tracked before this file existed. Ignoring it is not
+# enough on its own - an already-tracked file stays tracked. Remove it from the
+# index (this keeps your local copy):
+#
+#     git rm --cached ecotrack.iml
+#
+ecotrack.iml
+
+# Note on pubspec.lock: it IS committed, deliberately. EcoTrack is an
+# application, not a library, so committing the lock is what makes
+# `flutter pub get` reproduce the exact dependency set this code was verified
+# against - including the SDK floors recorded in its `sdks:` section, which
+# pubspec.yaml mirrors.

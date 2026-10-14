@@ -102,7 +102,10 @@ class EcoTrackStartupErrorApp extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: AppColors.danger.withValues(alpha: 0.08),
+                        // textTintAlpha, not a bare 0.08: the error text inside this box is
+              // painted in AppColors.danger on a danger tint, which is exactly
+              // the case the constant encodes (4.96:1).
+              color: AppColors.danger.withValues(alpha: AppColors.textTintAlpha),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: SelectableText(

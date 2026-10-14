@@ -1,6 +1,19 @@
 /// EcoTrack data models.
-/// Every model mirrors a SQLite table and provides toMap/fromMap
-/// helpers used by DatabaseHelper for persistence.
+/// Every model mirrors a SQLite table and provides a `fromMap` factory used by
+/// DatabaseHelper for persistence.
+///
+/// Only [WasteGuide], [EcoActivity] and [Reward] also carry a `toMap`, because
+/// those are the only three rows DatabaseHelper writes from a whole model
+/// (`insertGuide`/`updateGuide`, `insertActivity`/`updateActivity`,
+/// `insertReward`/`updateReward`). Every other write builds its column map
+/// inline so it can control exactly which columns are touched - `updateTenant`
+/// must not write `total_points`, `createTenant` must not write `id`.
+///
+/// The six `toMap` helpers that had no caller were removed rather than kept as
+/// "convenience": two of them were actively wrong. `AppNotification.toMap()`
+/// dropped `isRead` and `recipientRowId`, and `Tenant.toMap()` dropped
+/// `username`, so any future caller reaching for the obvious helper would have
+/// written an incomplete row.
 ///
 /// NOTE: the previous `AppUser` model was removed - it was never referenced
 /// anywhere. Auth reads `users` rows as maps in DatabaseHelper because the
@@ -31,18 +44,6 @@ class Tenant {
     required this.createdAt,
     this.username = '',
   });
-
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'user_id': userId,
-        'name': name,
-        'email': email,
-        'phone': phone,
-        'unit': unit,
-        'status': status,
-        'total_points': totalPoints,
-        'created_at': createdAt,
-      };
 
   factory Tenant.fromMap(Map<String, dynamic> m) => Tenant(
         id: m['id'] as int?,
@@ -95,14 +96,6 @@ class Admin {
     required this.createdAt,
     this.username = '',
   });
-
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'user_id': userId,
-        'name': name,
-        'email': email,
-        'created_at': createdAt,
-      };
 
   factory Admin.fromMap(Map<String, dynamic> m) => Admin(
         id: m['id'] as int?,
@@ -254,14 +247,6 @@ class ActivityCompletion {
     this.activityTitle = '',
   });
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'tenant_id': tenantId,
-        'activity_id': activityId,
-        'points_awarded': pointsAwarded,
-        'completed_at': completedAt,
-      };
-
   factory ActivityCompletion.fromMap(Map<String, dynamic> m) =>
       ActivityCompletion(
         id: m['id'] as int?,
@@ -364,15 +349,6 @@ class RewardRedemption {
     this.rewardTitle = '',
   });
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'tenant_id': tenantId,
-        'reward_id': rewardId,
-        'points_spent': pointsSpent,
-        'status': status,
-        'redeemed_at': redeemedAt,
-      };
-
   factory RewardRedemption.fromMap(Map<String, dynamic> m) =>
       RewardRedemption(
         id: m['id'] as int?,
@@ -404,14 +380,6 @@ class AppNotification {
     this.recipientRowId,
   });
 
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'title': title,
-        'message': message,
-        'sender': sender,
-        'created_at': createdAt,
-      };
-
   factory AppNotification.fromMap(Map<String, dynamic> m) => AppNotification(
         id: m['id'] as int?,
         title: m['title'] as String,
@@ -435,13 +403,6 @@ class EnvironmentalQuote {
     required this.author,
     required this.createdAt,
   });
-
-  Map<String, dynamic> toMap() => {
-        'id': id,
-        'quote_text': quoteText,
-        'author': author,
-        'created_at': createdAt,
-      };
 
   factory EnvironmentalQuote.fromMap(Map<String, dynamic> m) =>
       EnvironmentalQuote(

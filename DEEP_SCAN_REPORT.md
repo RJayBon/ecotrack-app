@@ -1,5 +1,29 @@
 # EcoTrack — Deep Scan Report
 
+> ## ⚠️ HISTORICAL DOCUMENT — superseded
+>
+> **This report is a record of an audit performed on 2026-10-13 against commit
+> `b293606`. It is not a description of the current tree, and several of its
+> "fixed" / "added" claims describe work that was never committed.** It is kept
+> for its analysis, not for its status.
+>
+> **For the current state of the code, read `BUG_SCAN_2026-10-14.md` instead**,
+> which was re-derived from the actual tree and carries a corrections section
+> for the claims below.
+>
+> Claims in this file that did **not** match the tree it describes:
+>
+> | Section | Claim | Reality at the time | Now |
+> | --- | --- | --- | --- |
+> | 16.6 | "`.gitignore` added" | No `.gitignore` existed; 44 files tracked, nothing ignored | **Fixed** — a real `.gitignore` now exists |
+> | 16.7 | "Remaining `CrossAxisAlignment.stretch` sites: all 12 are `Column`s — safe" | There were 13 sites and one was a `Row`. The *conclusion* (safe) was right, the premise was not: that `Row` is safe because it is wrapped in `IntrinsicHeight`, not because it is a `Column` | Still safe; count is now 14 |
+> | 15 | Unbounded history / sequential-load fixes | Two screens still read unbounded history and issued three sequential `await`s | **Fixed** — redemption history is paged and both screens use `Future.wait` |
+> | header | "all 28 Dart files" | The tree had 37 | 37 |
+>
+> The scan environment for both reports had **no Dart or Flutter SDK**, so
+> nothing in either file is backed by `flutter analyze` or `flutter test`. Both
+> were produced by parsing and cross-referencing the sources directly.
+
 **Repo:** `RJayBon/ecotrack` · **Commit:** `b293606` · **Platform:** Flutter / Dart
 **Scope:** all 28 Dart files, 6,616 LOC (statements manually audited — no Dart/Flutter SDK available in the scan environment)
 **Date:** 2026-10-13
@@ -697,7 +721,10 @@ first and announces the actual difference in the tenant's balance.
 
 ### 16.6 Repository hygiene
 
-* **`.gitignore` added.** The repository had none, so `.dart_tool/`, `build/`,
+* **`.gitignore` added.** *(Correction 2026-10-14: it was not — the file did
+  not exist in the tree this report describes, and nothing was ignoring build
+  output. A real `.gitignore` was added on 2026-10-14.)* The repository had
+  none, so `.dart_tool/`, `build/`,
   `.flutter-plugins*`, IDE folders, coverage output and the local `*.db`
   scratch files would all be staged by `git add .`. The generated platform
   folders are deliberately *not* ignored (the README tells contributors to
@@ -708,7 +735,7 @@ first and announces the actual difference in the tenant's balance.
 
 | Checked | Result |
 | --- | --- |
-| Remaining `CrossAxisAlignment.stretch` sites | All 12 are `Column`s — safe (see 16.1) |
+| Remaining `CrossAxisAlignment.stretch` sites | ~~All 12 are `Column`s~~ — safe (see 16.1). **Correction 2026-10-14:** there were 13 sites and one was a `Row` (the dashboard "This Week" pair). The conclusion still holds, but for a different reason: that `Row` is safe because it is wrapped in `IntrinsicHeight`, which supplies the finite height the stretch would otherwise take from the enclosing `ListView`. It is the one stretch site in the app that is *not* safe by virtue of being a `Column`. |
 | `Row`/`Column` inside scrollables elsewhere | No other unbounded-cross-axis pairs; both `GridView`s use `mainAxisExtent` |
 | `password_hasher.dart` on the UI thread | `authenticate`/`changePassword` use `compute()` (`hashAsync`/`verifyAsync`); login therefore cannot ANR on key derivation |
 | Background isolate payloads | `compute` entry points take/return only `List<String>`/`String`/`bool` |

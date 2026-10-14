@@ -3,14 +3,38 @@ description: EcoTrack - Waste management, recycling education & eco habits track
 publish_to: 'none'
 version: 1.0.0+1
 
-# NOTE: the Flutter constraint below is REQUIRED, not cosmetic.
-# This app uses Color.withValues(), CardThemeData and DialogThemeData
-# (all introduced in Flutter 3.27). Without this line `flutter pub get`
-# resolves happily on an older SDK and then fails with confusing
-# widget-level compile errors instead of telling you to upgrade.
+# ---------------------------------------------------------------------------
+# SDK floors
+#
+# These mirror the `sdks:` section of the committed pubspec.lock
+# (dart ">=3.12.0 <4.0.0", flutter ">=3.44.0"). That section is not cosmetic:
+# it is the intersection of the SDK constraints of every package the lock
+# actually resolved to, so it is the minimum SDK that can reproduce this
+# dependency set at all.
+#
+# DEFECT FIX (A4): this file previously declared Dart >= 3.6.0 / Flutter
+# >= 3.27.0 while the committed lock required Dart >= 3.12.0 / Flutter
+# >= 3.44.0. The two contradicted each other, so `flutter pub get` on a
+# 3.27-3.43 SDK - exactly what the old constraint and the old README both
+# advertised as supported - failed with a resolution error against a lock
+# file the developer had no way to interpret. Both files now say the same
+# thing. If you must support an older SDK, delete pubspec.lock, lower these
+# floors, re-run `flutter pub get`, and commit the newly resolved lock.
+#
+# The floor is also load-bearing for the code itself: this app calls
+# Color.withValues() (26 call sites) and DialogThemeData, neither of which
+# exists on older SDKs. Without a constraint, `flutter pub get` resolves
+# happily and the build then fails with confusing widget-level errors instead
+# of telling you to upgrade.
+#
+# DEFECT FIX (A7): the note here used to cite `CardThemeData` as one of the
+# APIs forcing the floor. It appears nowhere in lib/ or test/ - the real
+# API-level reasons are `Color.withValues()` and `DialogThemeData`. A
+# rationale that names a symbol the codebase does not use cannot be checked
+# by a reader, so it silently rots.
 environment:
-  sdk: '>=3.6.0 <4.0.0'
-  flutter: '>=3.27.0'
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
@@ -26,7 +50,7 @@ dependencies:
   sqflite_common_ffi: '>=2.3.0 <4.0.0'
 
   # SQLite for Flutter web (sqlite3 compiled to wasm).
-  # Requires a one-time asset setup step - see README.md.
+  # Requires a one-time asset setup step - see README.md, "Running on the web".
   sqflite_common_ffi_web: '>=0.4.0 <2.0.0'
 
   path: ^1.9.0
@@ -39,18 +63,29 @@ dev_dependencies:
 
   # Generates every platform launcher-icon size from one source PNG.
   # Run `dart run flutter_launcher_icons` after changing the source image.
-  # See the "App icon" section in README.md.
+  # See README.md, "App icon".
   flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
 
-  # The app-icon source. Declared here as an asset so the same PNG can also
-  # be used inside the app (Image.asset('assets/icon/app_icon.png')), not
-  # just as the launcher icon. If you only ever want it as the launcher
-  # icon, this block can be removed.
-  assets:
-    - assets/icon/app_icon.png
+  # DEFECT FIX: there is no `assets:` block here any more.
+  #
+  # `assets/icon/app_icon.png` used to be declared as a bundled asset "so the
+  # same PNG can also be used inside the app", but nothing in lib/ or test/
+  # calls Image.asset - 0 occurrences - so the declaration only copied a
+  # 1024x1024 PNG into every build artefact for nothing.
+  #
+  # The PNG still exists on disk at assets/icon/app_icon.png, which is all
+  # `flutter_launcher_icons` needs: it reads `image_path` from the filesystem
+  # at generation time, not from the asset bundle.
+  #
+  # If you ever do want to render it in-app, re-add:
+  #
+  #   assets:
+  #     - assets/icon/app_icon.png
+  #
+  # and reference it with Image.asset('assets/icon/app_icon.png').
 
   # NOTE: you asked for no external fonts, so fontFamily is not pinned in
   # the theme. If you ever want true cross-platform Roboto, drop the .ttf
@@ -68,6 +103,9 @@ flutter:
 # Re-run `dart run flutter_launcher_icons` after any change to the source
 # image, then `flutter clean && flutter run` (icons are baked in at build
 # time - hot reload does not pick them up).
+#
+# The platform folders this writes into do not exist yet in this checkout.
+# Generate them first - see README.md, "First-time setup".
 # ---------------------------------------------------------------------------
 flutter_launcher_icons:
   android: true

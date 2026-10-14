@@ -22,7 +22,7 @@ class _AdminTenantDetailScreenState extends State<AdminTenantDetailScreen> {
   int _redemptionCount = 0;
   bool _changed = false;
 
-    /// Distinguishes "the tenant does not exist (any more)" from "we have not
+  /// Distinguishes "the tenant does not exist (any more)" from "we have not
   /// finished loading yet" and from "the read threw". Without this the
   /// screen rendered an empty white body in all three cases.
   bool _loadFailed = false;
@@ -179,9 +179,10 @@ class _AdminTenantDetailScreenState extends State<AdminTenantDetailScreen> {
                         children: [
                           CircleAvatar(
                             radius: 32,
-                            backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                            child: Text(
-                                t.name.isNotEmpty ? t.name[0].toUpperCase() : '?',
+                            // textTintAlpha: the initial is text on this wash.
+                            backgroundColor: AppColors.primary
+                                .withValues(alpha: AppColors.textTintAlpha),
+                            child: Text(nameInitial(t.name),
                                 style: const TextStyle(
                                     fontSize: 24,
                                     color: AppColors.primary,

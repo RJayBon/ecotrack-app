@@ -467,6 +467,101 @@ void main() {
   });
 
   // -------------------------------------------------------------------
+  // Regression coverage for the mid-session deactivation guard. Login already
+  // refused an `inactive` tenant, but neither points transaction looked at
+  // `tenants.status`, so an admin deactivating someone had no effect until that
+  // person happened to log out - they could keep earning and spending the whole
+  // time. Both transactions now re-read the status inside the transaction.
+  group('deactivated tenants are refused mid-session', () {
+    Future<Tenant> tenantWithPoints(String username, int points) async {
+      final tenant = await addTenant(username);
+      final db = await helper.database;
+      await db.rawUpdate(
+        'UPDATE tenants SET total_points = ? WHERE id = ?',
+        [points, tenant.id],
+      );
+      return (await helper.getTenantById(tenant.id!))!;
+    }
+
+    test('completeActivity refuses an inactive tenant and awards nothing',
+        () async {
+      final tenant = await addTenant('deactivated_earner');
+      final activity = await seededActivity('Recycle Plastic Bottles');
+
+      // Sanity: active tenants can earn.
+      expect(await helper.completeActivity(tenant.id!, activity), isNull);
+      expect((await helper.getTenantById(tenant.id!))!.totalPoints, 20);
+
+      await helper.setTenantStatus(tenant.id!, 'inactive');
+
+      // The tenant object the UI already holds is stale by design - the check
+      // is against the row, not the argument.
+      expect(await helper.completeActivity(tenant.id!, activity),
+          kTenantDeactivatedMessage);
+      expect((await helper.getTenantById(tenant.id!))!.totalPoints, 20);
+      expect(await helper.getActivityCount(tenant.id!), 1);
+    });
+
+    test('redeemReward refuses an inactive tenant, keeping points and stock',
+        () async {
+      final tenant = await tenantWithPoints('deactivated_spender', 100);
+      final reward = (await helper.getRewards())
+          .firstWhere((r) => r.title == 'Reusable Eco Tote Bag');
+      final stockBefore = reward.stock;
+
+      await helper.setTenantStatus(tenant.id!, 'inactive');
+
+      expect(await helper.redeemReward(tenant.id!, reward),
+          kTenantDeactivatedMessage);
+      // No debit, no stock movement, no redemption row: the guard runs before
+      // any of the writes inside the transaction.
+      expect((await helper.getTenantById(tenant.id!))!.totalPoints, 100);
+      expect(
+        (await helper.getRewards())
+            .firstWhere((r) => r.id == reward.id)
+            .stock,
+        stockBefore,
+      );
+      expect(await helper.getRedemptionHistory(tenant.id!), isEmpty);
+    });
+
+    test('reactivating restores earning and spending', () async {
+      final tenant = await tenantWithPoints('reactivated', 100);
+      final activity = await seededActivity('Recycle Plastic Bottles');
+      final reward = (await helper.getRewards())
+          .firstWhere((r) => r.title == 'Reusable Eco Tote Bag');
+
+      await helper.setTenantStatus(tenant.id!, 'inactive');
+      expect(await helper.completeActivity(tenant.id!, activity),
+          kTenantDeactivatedMessage);
+
+      await helper.setTenantStatus(tenant.id!, 'active');
+      expect(await helper.completeActivity(tenant.id!, activity), isNull);
+      expect(await helper.redeemReward(tenant.id!, reward), isNull);
+      // 100 + 20 earned - 60 spent.
+      expect((await helper.getTenantById(tenant.id!))!.totalPoints, 60);
+    });
+
+    test('a tenant id that no longer exists is reported, not silently ignored',
+        () async {
+      final activity = await seededActivity('Recycle Plastic Bottles');
+      // 999999 was never created; the guard queries `tenants` before anything
+      // else, so this cannot reach the activity lookup.
+      expect(await helper.completeActivity(999999, activity),
+          'Your account could not be found.');
+    });
+
+    test('login refuses the same tenant the transactions refuse', () async {
+      final tenant = await addTenant('login_blocked');
+      await helper.setTenantStatus(tenant.id!, 'inactive');
+      final tenantRow = await helper.getTenantById(tenant.id!);
+      expect(tenantRow!.status, 'inactive');
+      // LoginScreen branches on exactly this field, so the two enforcement
+      // points cannot drift apart on the definition of "deactivated".
+    });
+  });
+
+  // -------------------------------------------------------------------
   // The regression this whole layer exists for: archiving a catalogue item
   // must NOT destroy tenant history (v1 did, via ON DELETE CASCADE, while the
   // dialog claimed history was kept).

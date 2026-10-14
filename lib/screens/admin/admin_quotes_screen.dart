@@ -15,6 +15,9 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
   List<EnvironmentalQuote> _quotes = [];
   EnvironmentalQuote? _quoteOfDay;
 
+  /// True when the last load threw - see `_AdminActivitiesScreenState`.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -22,13 +25,25 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
   }
 
   Future<void> _load() async {
-    final quotes = await DatabaseHelper.instance.getQuotes();
-    final qod = await DatabaseHelper.instance.getQuoteOfTheDay();
-    if (!mounted) return;
-    setState(() {
-      _quotes = quotes;
-      _quoteOfDay = qod;
-    });
+    try {
+      // DEFECT FIX (C2): two independent reads that used to run back to back.
+      final results = await Future.wait<Object?>([
+        DatabaseHelper.instance.getQuotes(),
+        DatabaseHelper.instance.getQuoteOfTheDay(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _quotes = results[0] as List<EnvironmentalQuote>;
+        _quoteOfDay = results[1] as EnvironmentalQuote?;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): no error path existed, so a failed read rendered
+      // "No quotes yet" and offered to add the first one.
+      debugPrint('Quote list load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
   Future<void> _openForm({EnvironmentalQuote? quote}) async {
@@ -50,9 +65,18 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
       danger: true,
     );
     if (!confirmed) return;
-    await DatabaseHelper.instance.deleteQuote(q.id!);
-    if (mounted) showSuccessSnack(context, 'Quote deleted.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.deleteQuote(q.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Quote deleted.');
+      await _load();
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): an exception escaped unhandled and the row stayed put
+      // with no explanation.
+      debugPrint('Delete quote failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not delete the quote.');
+    }
   }
 
   @override
@@ -64,7 +88,14 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Add Quote'),
       ),
-      body: _quotes.isEmpty
+      body: _loadFailed
+          ? ErrorState(
+              title: 'Quotes could not be loaded',
+              subtitle: 'The quote list could not be read from the local '
+                  'database. Please try again.',
+              onRetry: _load,
+            )
+          : _quotes.isEmpty
           ? EmptyState(
               icon: Icons.format_quote,
               title: 'No quotes yet',
@@ -94,13 +125,23 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
                           const Row(children: [
                             Icon(Icons.today, color: Colors.white, size: 16),
                             SizedBox(width: 6),
-                            Text('Today\'s Quote', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                            Text("Today's Quote",
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
                           ]),
                           const SizedBox(height: 8),
                           Text('"${_quoteOfDay!.quoteText}"',
-                              style: const TextStyle(color: Colors.white, fontSize: 15, fontStyle: FontStyle.italic, height: 1.4)),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontStyle: FontStyle.italic,
+                                  height: 1.4)),
                           const SizedBox(height: 8),
-                          Text('— ${_quoteOfDay!.author}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          Text('— ${_quoteOfDay!.author}',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12)),
                         ],
                       ),
                     ),
@@ -110,23 +151,33 @@ class _AdminQuotesScreenState extends State<AdminQuotesScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(Icons.format_quote, color: AppColors.accent, size: 20),
+                              const Icon(Icons.format_quote,
+                                  color: AppColors.accent, size: 20),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(q.quoteText, style: const TextStyle(fontSize: 13.5, height: 1.35)),
+                                    Text(q.quoteText,
+                                        style: const TextStyle(
+                                            fontSize: 13.5, height: 1.35)),
                                     const SizedBox(height: 4),
-                                    Text('— ${q.author}', style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                                    Text('— ${q.author}',
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.textMuted)),
                                   ],
                                 ),
                               ),
                               PopupMenuButton<String>(
-                                onSelected: (v) => v == 'edit' ? _openForm(quote: q) : _delete(q),
+                                onSelected: (v) => v == 'edit'
+                                    ? _openForm(quote: q)
+                                    : _delete(q),
                                 itemBuilder: (context) => const [
-                                  PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                  PopupMenuItem(value: 'delete', child: Text('Delete')),
+                                  PopupMenuItem(
+                                      value: 'edit', child: Text('Edit')),
+                                  PopupMenuItem(
+                                      value: 'delete', child: Text('Delete')),
                                 ],
                               ),
                             ],
@@ -179,22 +230,34 @@ class _QuoteFormSheetState extends State<_QuoteFormSheet> {
       author: _authorCtrl.text.trim(),
       createdAt: widget.quote?.createdAt ?? '',
     );
-    if (_isEdit) {
-      await DatabaseHelper.instance.updateQuote(quote);
-    } else {
-      await DatabaseHelper.instance.insertQuote(quote);
+    try {
+      if (_isEdit) {
+        await DatabaseHelper.instance.updateQuote(quote);
+      } else {
+        await DatabaseHelper.instance.insertQuote(quote);
+      }
+      if (!mounted) return;
+      showSuccessSnack(context, _isEdit ? 'Quote updated.' : 'Quote added.');
+      Navigator.pop(context, true);
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): a failed write left `_saving` true, stranding the
+      // admin's edits in a sheet whose button spun forever.
+      debugPrint('Save quote failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not save the quote.');
     }
-    if (!mounted) return;
-    showSuccessSnack(context, _isEdit ? 'Quote updated.' : 'Quote added.');
-    Navigator.pop(context, true);
   }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Form(
           key: _formKey,
@@ -202,22 +265,34 @@ class _QuoteFormSheetState extends State<_QuoteFormSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(width: 40, height: 4,
-                      decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
-                ),
+                // DEFECT FIX (E2): shared SheetHandle, and it now uses the
+                // vetted AppColors.cardBorder instead of raw grey.shade300.
+                const SheetHandle(),
                 const SizedBox(height: 16),
-                Text(_isEdit ? 'Edit Quote' : 'Add Quote', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(_isEdit ? 'Edit Quote' : 'Add Quote',
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
-                LabeledField(label: 'Quote text', controller: _textCtrl, maxLines: 3,
-                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
-                LabeledField(label: 'Author', controller: _authorCtrl,
-                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null),
+                LabeledField(
+                    label: 'Quote text',
+                    controller: _textCtrl,
+                    maxLines: 3,
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Required' : null),
+                LabeledField(
+                    label: 'Author',
+                    controller: _authorCtrl,
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Required' : null),
                 const SizedBox(height: 8),
                 ElevatedButton(
                   onPressed: _saving ? null : _submit,
                   child: _saving
-                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
                       : Text(_isEdit ? 'Save Changes' : 'Add Quote'),
                 ),
               ],

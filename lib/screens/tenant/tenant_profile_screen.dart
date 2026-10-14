@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../db/database_helper.dart';
 import '../../models/models.dart';
+import '../../utils/formatters.dart';
 import '../../utils/theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../login_screen.dart';
@@ -25,6 +26,10 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
 
   List<ActivityCompletion> _activityHistory = [];
   List<RewardRedemption> _rewardHistory = [];
+
+  /// True when the history read threw, so the two history cards can say so
+  /// instead of rendering their empty states.
+  bool _historyLoadFailed = false;
 
   @override
   void initState() {
@@ -68,20 +73,31 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
   }
 
   Future<void> _loadHistory() async {
-    // Only the most recent entries are ever displayed, so do not pull the
-    // tenant's entire lifetime history into memory on every tab visit.
-    final results = await Future.wait<Object?>([
-      DatabaseHelper.instance.getActivityHistory(_tenant.id!, limit: 8),
-      DatabaseHelper.instance.getRedemptionHistory(_tenant.id!, limit: 8),
-    ]);
-    if (!mounted) return;
-    final acts = results[0] as List<ActivityCompletion>;
-    final reds = results[1] as List<RewardRedemption>;
-    if (!mounted) return;
-    setState(() {
-      _activityHistory = acts;
-      _rewardHistory = reds;
-    });
+    final tenantId = _tenant.id;
+    if (tenantId == null) return;
+    try {
+      // Only the most recent entries are ever displayed, so do not pull the
+      // tenant's entire lifetime history into memory on every tab visit.
+      final results = await Future.wait<Object?>([
+        DatabaseHelper.instance.getActivityHistory(tenantId, limit: 8),
+        DatabaseHelper.instance.getRedemptionHistory(tenantId, limit: 8),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _activityHistory = results[0] as List<ActivityCompletion>;
+        _rewardHistory = results[1] as List<RewardRedemption>;
+        _historyLoadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): no error path existed. A failed read left both history
+      // cards showing their empty states, which reads as "you have never done
+      // anything" rather than "this could not be loaded". (The duplicated
+      // `if (!mounted) return;` that sat between the two casts is also gone -
+      // there is no await between them, so the second check was dead code.)
+      debugPrint('Tenant profile history load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _historyLoadFailed = true);
+    }
   }
 
   Future<void> _saveProfile() async {
@@ -97,24 +113,33 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
       email: _emailCtrl.text.trim(),
       phone: _phoneCtrl.text.trim(),
     );
-    await DatabaseHelper.instance.updateTenant(updated);
-    if (!mounted) return;
-    setState(() {
-      _tenant = updated;
-      _editing = false;
-      _saving = false;
-    });
-    widget.onChanged();
-    showSuccessSnack(context, 'Profile updated.');
+    try {
+      await DatabaseHelper.instance.updateTenant(updated);
+      if (!mounted) return;
+      setState(() {
+        _tenant = updated;
+        _editing = false;
+        _saving = false;
+      });
+      widget.onChanged();
+      showSuccessSnack(context, 'Profile updated.');
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): a failed write left `_saving` true (button spinning
+      // forever) AND `_editing` true, trapping the tenant in the edit form with
+      // no message and no way to save.
+      debugPrint('Save tenant profile failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not save your profile.');
+    }
   }
 
-  Future<void> _changePassword() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ChangePasswordSheet(userId: _tenant.userId),
-    );
+  Future<void> _changePassword() {
+    // DEFECT FIX (C5): shared sheet from common_widgets.dart. This file carried
+    // a ~102-line private `_ChangePasswordSheet` that was byte-identical to the
+    // admin one, so the same two defects (no try/catch, no error path) shipped
+    // twice. Both copies are now one fixed widget.
+    return showChangePasswordSheet(context, userId: _tenant.userId);
   }
 
   Future<void> _logout() async {
@@ -132,6 +157,26 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
     );
   }
 
+  /// Inline "could not be loaded" row for the two history sections. A full
+  /// [ErrorState] is too large to sit inside a scrolling profile page, so this
+  /// keeps the message local to the section that failed - the point is that it
+  /// no longer says "you have never done anything" when the truth is "this
+  /// could not be read".
+  Widget _historyError() {
+    return EcoCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(children: [
+        const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text('History could not be loaded.',
+              style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+        ),
+        TextButton(onPressed: _loadHistory, child: const Text('Retry')),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -144,12 +189,12 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
             Center(
               child: CircleAvatar(
                 radius: 40,
-                backgroundColor:
-                    AppColors.primary.withValues(alpha: 0.12),
-                child: Text(
-                    _tenant.name.isNotEmpty
-                        ? _tenant.name[0].toUpperCase()
-                        : '?',
+                // textTintAlpha, not iconTintAlpha: the initial is text.
+                backgroundColor: AppColors.primary
+                    .withValues(alpha: AppColors.textTintAlpha),
+                // `nameInitial()` also guards against a whitespace-only name,
+                // which the inline `name[0]` check did not.
+                child: Text(nameInitial(_tenant.name),
                     style: const TextStyle(
                         fontSize: 30,
                         color: AppColors.primary,
@@ -233,7 +278,9 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
             const Text('Activity History',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
             const SizedBox(height: 8),
-            if (_activityHistory.isEmpty)
+            if (_historyLoadFailed)
+              _historyError()
+            else if (_activityHistory.isEmpty)
               const Text('No activities completed yet.',
                   style: TextStyle(
                       color: AppColors.textMuted, fontSize: 13))
@@ -261,7 +308,9 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
             const Text('Reward History',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
             const SizedBox(height: 8),
-            if (_rewardHistory.isEmpty)
+            if (_historyLoadFailed)
+              _historyError()
+            else if (_rewardHistory.isEmpty)
               const Text('No rewards redeemed yet.',
                   style: TextStyle(
                       color: AppColors.textMuted, fontSize: 13))
@@ -306,108 +355,4 @@ class _TenantProfileScreenState extends State<TenantProfileScreen> {
         Expanded(
             child: Text(text, style: const TextStyle(fontSize: 13.5))),
       ]);
-}
-
-class _ChangePasswordSheet extends StatefulWidget {
-  final int userId;
-  const _ChangePasswordSheet({required this.userId});
-
-  @override
-  State<_ChangePasswordSheet> createState() => _ChangePasswordSheetState();
-}
-
-class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _currentCtrl = TextEditingController();
-  final _newCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _currentCtrl.dispose();
-    _newCtrl.dispose();
-    _confirmCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    final ok = await DatabaseHelper.instance
-        .changePassword(widget.userId, _currentCtrl.text, _newCtrl.text);
-    if (!mounted) return;
-    if (!ok) {
-      setState(() => _saving = false);
-      showErrorSnack(context, 'Current password is incorrect.');
-      return;
-    }
-    showSuccessSnack(context, 'Password changed successfully.');
-    Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2))),
-              ),
-              const SizedBox(height: 16),
-              const Text('Change Password',
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              LabeledField(
-                  label: 'Current password',
-                  controller: _currentCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? 'Required' : null),
-              LabeledField(
-                  label: 'New password',
-                  controller: _newCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      (v == null || v.length < 6) ? 'Min 6 characters' : null),
-              LabeledField(
-                  label: 'Confirm new password',
-                  controller: _confirmCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      v != _newCtrl.text ? 'Passwords do not match' : null),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: _saving ? null : _submit,
-                child: _saving
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Text('Update Password'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

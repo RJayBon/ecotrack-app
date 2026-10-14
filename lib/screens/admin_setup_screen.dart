@@ -82,22 +82,40 @@ class _AdminSetupScreenState extends State<AdminSetupScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(20),
+                    // Wrapped in Center on purpose (DEFECT FIX C3). This Column
+                    // uses CrossAxisAlignment.stretch, which hands children TIGHT
+                    // cross-axis constraints, so the `width: 72` below was
+                    // overridden and the badge rendered as a full-width green bar
+                    // 72px tall with a floating icon in it instead of a rounded
+                    // 72x72 square. Center relaxes the constraint back to loose so
+                    // the intrinsic width applies - which is exactly what
+                    // login_screen.dart already does for its 84x84 badge.
+                    Center(
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Icon(Icons.eco, color: Colors.white, size: 38),
                       ),
-                      child: const Icon(Icons.eco, color: Colors.white, size: 38),
                     ),
                     const SizedBox(height: 20),
                     const Text('Welcome to EcoTrack',
-                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.textDark)),
+                        style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textDark)),
                     const SizedBox(height: 6),
                     const Text(
-                      'Set up the first administrator account to get started. This account manages tenants, guides, activities and rewards.',
-                      style: TextStyle(color: AppColors.textMuted, fontSize: 13.5, height: 1.4),
+                      'Set up the first administrator account to get '
+                      'started. This account manages tenants, guides, '
+                      'activities and rewards.',
+                      style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 13.5,
+                          height: 1.4),
                     ),
                     const SizedBox(height: 28),
                     LabeledField(label: 'Full name', controller: _nameCtrl, icon: Icons.badge_outlined,

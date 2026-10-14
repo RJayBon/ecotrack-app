@@ -35,62 +35,88 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_error != null) setState(() => _error = null);
   }
 
+  /// Single exit for every failure in [_login]: clears the busy flag and shows
+  /// [message], but only while this State is alive.
+  ///
+  /// DEFECT FIX (B1): `_login` had no try/catch at all. `authenticate()` opens
+  /// the database, so any failure there - file not openable, missing libsqlite3
+  /// on Linux, absent web wasm assets, a failed migration, a corrupt file -
+  /// escaped as an unhandled async error and left `_loading` true forever. That
+  /// kept `onPressed: _loading ? null : _login` permanently disabled with a
+  /// spinner and showed no message, and because this is the one screen the user
+  /// cannot navigate away from, the only recovery was killing the app.
+  void _fail(String message) {
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _error = message;
+    });
+  }
+
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final result = await DatabaseHelper.instance.authenticate(
-      _usernameCtrl.text.trim(),
-      _passwordCtrl.text,
-    );
+
+    final Map<String, dynamic>? result;
+    try {
+      result = await DatabaseHelper.instance.authenticate(
+        _usernameCtrl.text.trim(),
+        _passwordCtrl.text,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Login failed: $error\n$stackTrace');
+      _fail('Could not reach the local database. Close and reopen the app, '
+          'and if it keeps happening contact your administrator.');
+      return;
+    }
+
     if (!mounted) return;
     if (result == null) {
-      setState(() {
-        _loading = false;
-        _error = 'Invalid username or password.';
-      });
+      _fail('Invalid username or password.');
       return;
     }
     final role = result['role'] as String;
     final userId = result['userId'] as int;
 
-    if (role == 'admin') {
-      final admin = await DatabaseHelper.instance.getAdminByUserId(userId);
-      if (!mounted) return;
-      if (admin == null) {
-        setState(() {
-          _loading = false;
-          _error = 'Admin profile is missing. Please contact support.';
-        });
-        return;
+    try {
+      if (role == 'admin') {
+        final admin = await DatabaseHelper.instance.getAdminByUserId(userId);
+        if (!mounted) return;
+        if (admin == null) {
+          _fail('Admin profile is missing. Please contact support.');
+          return;
+        }
+        await Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) =>
+                AdminDashboardScreen(adminUserId: userId, admin: admin),
+          ),
+        );
+      } else {
+        final tenant = await DatabaseHelper.instance.getTenantByUserId(userId);
+        if (!mounted) return;
+        if (tenant == null) {
+          _fail('Tenant record not found.');
+          return;
+        }
+        if (tenant.status == 'inactive') {
+          // Same wording DatabaseHelper returns from completeActivity /
+          // redeemReward, so a tenant blocked at the door and one deactivated
+          // mid-session see one consistent message.
+          _fail(kTenantDeactivatedMessage);
+          return;
+        }
+        await Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+              builder: (_) => TenantHomeScreen(tenantUserId: userId)),
+        );
       }
-      await Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => AdminDashboardScreen(adminUserId: userId, admin: admin),
-        ),
-      );
-    } else {
-      final tenant = await DatabaseHelper.instance.getTenantByUserId(userId);
-      if (!mounted) return;
-      if (tenant == null) {
-        setState(() {
-          _loading = false;
-          _error = 'Tenant record not found.';
-        });
-        return;
-      }
-      if (tenant.status == 'inactive') {
-        setState(() {
-          _loading = false;
-          _error = 'This account has been deactivated. Contact your administrator.';
-        });
-        return;
-      }
-      await Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => TenantHomeScreen(tenantUserId: userId)),
-      );
+    } catch (error, stackTrace) {
+      debugPrint('Post-login lookup failed: $error\n$stackTrace');
+      _fail('Signed in, but your profile could not be loaded. Please try again.');
     }
   }
 
@@ -167,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: AppColors.danger.withValues(alpha: 0.08),
+                            color: AppColors.danger.withValues(alpha: AppColors.textTintAlpha),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Row(children: [

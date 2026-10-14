@@ -57,9 +57,18 @@ class _AdminGuidesScreenState extends State<AdminGuidesScreen> {
       danger: true,
     );
     if (!confirmed) return;
-    await DatabaseHelper.instance.deleteGuide(g.id!);
-    if (mounted) showSuccessSnack(context, 'Guide deleted.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.deleteGuide(g.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Guide deleted.');
+      await _load();
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): an exception here escaped unhandled and the guide
+      // stayed in the list with no explanation.
+      debugPrint('Delete guide failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not delete the guide.');
+    }
   }
 
   @override
@@ -117,8 +126,8 @@ class _AdminGuidesScreenState extends State<AdminGuidesScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               CircleAvatar(
-                                backgroundColor:
-                                    AppColors.primary.withValues(alpha: 0.12),
+                                backgroundColor: AppColors.primary
+                                    .withValues(alpha: AppColors.iconTintAlpha),
                                 child: Icon(iconFor(g.icon),
                                     color: AppColors.primary, size: 20),
                               ),

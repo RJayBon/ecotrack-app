@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../db/database_helper.dart';
 import '../../models/models.dart';
 import '../../utils/constants.dart';
+import '../../utils/formatters.dart';
 import '../../utils/theme.dart';
 import '../../widgets/common_widgets.dart';
 import '../login_screen.dart';
@@ -50,23 +51,33 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
       createdAt: _admin.createdAt,
       username: _admin.username,
     );
-    await DatabaseHelper.instance.updateAdmin(updated);
-    if (!mounted) return;
-    setState(() {
-      _admin = updated;
-      _editing = false;
-      _saving = false;
-    });
-    showSuccessSnack(context, 'Profile updated.');
+    try {
+      await DatabaseHelper.instance.updateAdmin(updated);
+      if (!mounted) return;
+      setState(() {
+        _admin = updated;
+        _editing = false;
+        _saving = false;
+      });
+      showSuccessSnack(context, 'Profile updated.');
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): a failed write left `_saving` true (button spinning
+      // forever) AND `_editing` true, so the admin was trapped in the edit form
+      // with no way to save and no message explaining why.
+      debugPrint('Save admin profile failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not save your profile.');
+    }
   }
 
-  Future<void> _changePassword() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ChangePasswordSheet(userId: _admin.userId),
-    );
+  Future<void> _changePassword() {
+    // DEFECT FIX (C5): shared sheet from common_widgets.dart. This file used to
+    // carry its own ~106-line private `_ChangePasswordSheet` that was
+    // byte-identical to the tenant one, so every fix had to be applied twice -
+    // and neither copy had a try/catch, meaning a database error left the
+    // "Update Password" button spinning forever with no message.
+    return showChangePasswordSheet(context, userId: _admin.userId);
   }
 
   Future<void> _logout() async {
@@ -105,11 +116,12 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
             Center(
               child: CircleAvatar(
                 radius: 40,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
-                child: Text(
-                    _admin.name.isNotEmpty
-                        ? _admin.name[0].toUpperCase()
-                        : '?',
+                // textTintAlpha, not iconTintAlpha: the initial is text.
+                backgroundColor: AppColors.primary
+                    .withValues(alpha: AppColors.textTintAlpha),
+                // `nameInitial()` also guards against a whitespace-only name,
+                // which the inline `name[0]` check did not.
+                child: Text(nameInitial(_admin.name),
                     style: const TextStyle(
                         fontSize: 30,
                         color: AppColors.primary,
@@ -212,110 +224,6 @@ class _AdminProfileScreenState extends State<AdminProfileScreen> {
       ]);
 }
 
-class _ChangePasswordSheet extends StatefulWidget {
-  final int userId;
-  const _ChangePasswordSheet({required this.userId});
-
-  @override
-  State<_ChangePasswordSheet> createState() => _ChangePasswordSheetState();
-}
-
-class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _currentCtrl = TextEditingController();
-  final _newCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _currentCtrl.dispose();
-    _newCtrl.dispose();
-    _confirmCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    final ok = await DatabaseHelper.instance
-        .changePassword(widget.userId, _currentCtrl.text, _newCtrl.text);
-    if (!mounted) return;
-    if (!ok) {
-      setState(() => _saving = false);
-      showErrorSnack(context, 'Current password is incorrect.');
-      return;
-    }
-    showSuccessSnack(context, 'Password changed successfully.');
-    Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(2))),
-              ),
-              const SizedBox(height: 16),
-              const Text('Change Password',
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              LabeledField(
-                  label: 'Current password',
-                  controller: _currentCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? 'Required' : null),
-              LabeledField(
-                  label: 'New password',
-                  controller: _newCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      (v == null || v.length < 6) ? 'Min 6 characters' : null),
-              LabeledField(
-                  label: 'Confirm new password',
-                  controller: _confirmCtrl,
-                  obscure: true,
-                  validator: (v) =>
-                      v != _newCtrl.text ? 'Passwords do not match' : null),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: _saving ? null : _submit,
-                child: _saving
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Text('Update Password'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _AdminSettingsScreen extends StatefulWidget {
   const _AdminSettingsScreen();
 
@@ -325,6 +233,9 @@ class _AdminSettingsScreen extends StatefulWidget {
 
 class _AdminSettingsScreenState extends State<_AdminSettingsScreen> {
   bool _loading = true;
+
+  /// True when the settings read threw.
+  bool _loadFailed = false;
   bool _notifyNewTenant = true;
   bool _notifyRedemption = true;
 
@@ -335,25 +246,57 @@ class _AdminSettingsScreenState extends State<_AdminSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final settings = await DatabaseHelper.instance.getSettings();
-    if (!mounted) return;
-    setState(() {
-      // A missing key means "never changed", which defaults to on.
-      _notifyNewTenant = settings[kSettingNotifyNewTenant] != 'false';
-      _notifyRedemption = settings[kSettingNotifyRedemption] != 'false';
-      _loading = false;
-    });
+    try {
+      final settings = await DatabaseHelper.instance.getSettings();
+      if (!mounted) return;
+      setState(() {
+        // A missing key means "never changed", which defaults to on.
+        _notifyNewTenant = settings[kSettingNotifyNewTenant] != 'false';
+        _notifyRedemption = settings[kSettingNotifyRedemption] != 'false';
+        _loading = false;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): this left `_loading` true forever, so the whole
+      // Settings screen was a permanent spinner with no retry and no message.
+      debugPrint('Settings load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadFailed = true;
+      });
+    }
   }
 
+  bool _valueFor(String key) =>
+      key == kSettingNotifyNewTenant ? _notifyNewTenant : _notifyRedemption;
+
+  void _applyLocally(String key, bool value) {
+    if (key == kSettingNotifyNewTenant) {
+      _notifyNewTenant = value;
+    } else {
+      _notifyRedemption = value;
+    }
+  }
+
+  /// Flips the switch optimistically, persists, and **reverts** on failure.
+  ///
+  /// DEFECT FIX (E10): `onChanged: (v) => _set(key, v)` discarded the returned
+  /// future and the method had no error handling, so a failed `setSetting` left
+  /// the switch showing one thing while `app_settings` held another - and
+  /// nothing was ever surfaced to the admin. The dashboard reads these keys
+  /// back on its own load, so the desync survived a navigation.
   Future<void> _set(String key, bool value) async {
-    setState(() {
-      if (key == kSettingNotifyNewTenant) {
-        _notifyNewTenant = value;
-      } else {
-        _notifyRedemption = value;
-      }
-    });
-    await DatabaseHelper.instance.setSetting(key, value ? 'true' : 'false');
+    final previous = _valueFor(key);
+    setState(() => _applyLocally(key, value));
+    try {
+      await DatabaseHelper.instance.setSetting(key, value ? 'true' : 'false');
+    } catch (error, stackTrace) {
+      debugPrint('Save setting $key failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _applyLocally(key, previous));
+      showErrorSnack(context, 'Could not save that setting.');
+    }
   }
 
   @override
@@ -362,6 +305,13 @@ class _AdminSettingsScreenState extends State<_AdminSettingsScreen> {
       appBar: AppBar(title: const Text('Settings')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
+          : _loadFailed
+          ? ErrorState(
+              title: 'Settings could not be loaded',
+              subtitle: 'Your saved preferences could not be read from the '
+                  'local database. Please try again.',
+              onRetry: _load,
+            )
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [

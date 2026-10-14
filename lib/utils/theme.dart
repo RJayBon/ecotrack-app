@@ -2,10 +2,20 @@ import 'package:flutter/material.dart';
 
 /// EcoTrack brand palette and shared theming.
 ///
-/// Every value below was checked against the WCAG 2.1 contrast minimums
-/// (4.5:1 for normal text, 3:1 for large text and meaningful graphics).
-/// Use the ratio comments to pick the right token - in particular, never put
-/// text on [primaryLight] or use the "decorative" tokens as a text colour.
+/// Every ratio below is computed from the hex values with the WCAG 2.1
+/// relative-luminance formula (not estimated), against the backdrop the token
+/// is actually used on. The minimums are 4.5:1 for normal text, 3:1 for large
+/// text (>= 24px, or >= 18.66px bold) and 3:1 for meaningful graphics.
+///
+/// Two rules keep the palette honest, and they are encoded as constants so a
+/// new screen cannot get them wrong by guessing an alpha:
+///
+///  * [textTintAlpha] — use this whenever *text or an icon that carries
+///    meaning* is painted in `colour` on top of a tint of `colour`.
+///  * [iconTintAlpha] — use this for decorative washes behind icons only.
+///
+/// Never paint text on a tint stronger than [textTintAlpha]: at 0.10 primary
+/// drops to 4.49:1 and at 0.12 to 4.36:1, both under the 4.5:1 floor.
 class AppColors {
   const AppColors._();
 
@@ -16,51 +26,76 @@ class AppColors {
   /// White text on it: 7.87:1.
   static const primaryDark = Color(0xFF1B5E20);
 
-  /// DECORATIVE ONLY - avatars, icon washes, gradient art.
-  /// White text on it is only 2.36:1, so it must never sit behind text.
-  static const primaryLight = Color(0xFF66BB6A);
-
   /// Teal accent, used for icons and small status pills.
-  /// On white: 6.61:1. On its own 8% tint: 5.87:1.
+  /// On white: 6.61:1. White text on it: 6.61:1.
+  /// On its own [textTintAlpha] tint: 5.87:1.
   ///
   /// Was `0xFF00BFA5`, which measured 2.33:1 on white - a clear AA failure
   /// everywhere it was used as a foreground colour.
   static const accent = Color(0xFF00695C);
 
   /// Amber, used for icons and markers (never as text).
-  /// On white: 4.24:1, on its own 12% tint: 3.65:1 - comfortably above the
-  /// 3:1 non-text threshold.
+  /// On white: 4.24:1, on its own [iconTintAlpha] tint: 3.65:1, on a 0.15 tint
+  /// 3.53:1 - all comfortably above the 3:1 non-text threshold.
   ///
   /// Was `0xFFF9A825`, which measured 1.97:1 on white - invisible to many
   /// users, and below even the non-text minimum.
   static const warning = Color(0xFFB26A00);
 
-  /// Error red. On white: 5.62:1, on its own 8% tint: 4.96:1.
+  /// Error red. On white: 5.62:1, on its own [textTintAlpha] tint: 4.96:1.
+  /// White text on it: 5.62:1 - this is also the notification-badge colour.
   static const danger = Color(0xFFC62828);
 
   static const background = Color(0xFFF4F8F4);
   static const surface = Color(0xFFFFFFFF);
 
-  /// Body copy. On white: 14.03:1.
+  /// Body copy. On white: 15.05:1.
   static const textDark = Color(0xFF1B2A1D);
 
-  /// Secondary copy. On white: 5.34:1, on [background]: 4.98:1.
+  /// Secondary copy. On white: 5.34:1, on [background]: 4.98:1,
+  /// on [fieldFill]: 4.84:1.
   static const textMuted = Color(0xFF5F6F60);
 
-  /// Hairline border used by [EcoCard] and list separators.
+  /// Hairline border used by [EcoCard], list separators and the bottom-sheet
+  /// drag handle. Text on it: 12.46:1.
   static const cardBorder = Color(0xFFE3ECE4);
 
-  /// Fill for inputs and neutral containers.
+  /// Fill for inputs and neutral containers. Also the fill for a disabled
+  /// control (see [disabledForeground]).
   static const fieldFill = Color(0xFFF0F5F0);
 
-  /// Wash behind avatar initials and list leading icons.
+  /// Wash behind avatar initials and list leading icons. Text on it: 12.96:1.
   static const avatarTint = Color(0xFFE3F2E4);
+
+  /// Foreground for a disabled control.
+  ///
+  /// [textMuted] on [fieldFill] measures 4.84:1. WCAG 1.4.3 exempts inactive
+  /// components, so this is not strictly required - but in this app the
+  /// disabled Redeem button's label is the *only* thing that distinguishes
+  /// "you cannot afford this" from "out of stock", so it has to be legible.
+  ///
+  /// Replaced `Colors.grey.shade600` on `Colors.grey.shade300` (3.49:1), which
+  /// was also a raw Material colour sitting outside this palette.
+  static const disabledForeground = textMuted;
+
+  /// Background for a disabled control. Pairs with [disabledForeground].
+  static const disabledBackground = fieldFill;
+
+  /// Alpha for a tint that sits behind *text*. Primary text on a primary tint
+  /// at this alpha: 4.63:1 (AA). At 0.10 it is 4.49:1 and at 0.12 it is
+  /// 4.36:1 - both failures.
+  static const double textTintAlpha = 0.08;
+
+  /// Alpha for a purely decorative wash behind an icon. Only the 3:1 non-text
+  /// threshold applies, and every palette colour clears it at this alpha.
+  static const double iconTintAlpha = 0.12;
 
   /// Standard gradient for hero cards and banners.
   ///
   /// Both stops are dark enough for white body text (5.13:1 and 7.87:1).
-  /// The old gradient ended on [primaryLight], where 12-15px white labels
-  /// measured 2.36:1.
+  /// An earlier gradient ended on a light green (`0xFF66BB6A`), where 12-15px
+  /// white labels measured 2.36:1 - a hard AA failure. That token has been
+  /// removed from the palette entirely so it cannot come back.
   static const heroGradient = LinearGradient(
     colors: [primary, primaryDark],
     begin: Alignment.topLeft,
@@ -120,6 +155,10 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
+          // A disabled ElevatedButton keeps these explicit colours rather than
+          // falling back to the (far lower contrast) theme disabled colours.
+          disabledBackgroundColor: AppColors.disabledBackground,
+          disabledForegroundColor: AppColors.disabledForeground,
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           elevation: 0,
@@ -159,7 +198,8 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
       chipTheme: base.chipTheme.copyWith(
-        selectedColor: AppColors.primary.withValues(alpha: 0.14),
+        selectedColor:
+            AppColors.primary.withValues(alpha: AppColors.textTintAlpha),
         backgroundColor: AppColors.fieldFill,
         labelStyle: const TextStyle(color: AppColors.textDark),
         shape: const StadiumBorder(

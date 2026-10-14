@@ -93,7 +93,7 @@ class _TenantLearnScreenState extends State<TenantLearnScreen> {
                             children: [
                               CircleAvatar(
                                 backgroundColor: AppColors.primary
-                                    .withValues(alpha: 0.12),
+                                    .withValues(alpha: AppColors.iconTintAlpha),
                                 child: Icon(iconFor(g.icon),
                                     color: AppColors.primary, size: 20),
                               ),
@@ -160,7 +160,7 @@ class _GuideDetailScreen extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.1),
+                  color: AppColors.primary.withValues(alpha: AppColors.iconTintAlpha),
                   shape: BoxShape.circle),
               child: Icon(iconFor(guide.icon),
                   color: AppColors.primary, size: 40),

@@ -22,6 +22,11 @@ class _TenantActivitiesScreenState extends State<TenantActivitiesScreen> {
   int _currentPoints = 0;
   int? _busyActivityId;
 
+  /// True when the last load threw. Without it a database error rendered
+  /// "No activities yet", which reads as real (empty) data rather than a
+  /// failure - and the exception itself vanished into an unhandled async void.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -43,23 +48,53 @@ class _TenantActivitiesScreenState extends State<TenantActivitiesScreen> {
   }
 
   Future<void> _load() async {
-    final activities = await DatabaseHelper.instance.getActivities();
-    final completed =
-        await DatabaseHelper.instance.getCompletedActivityIds(widget.tenant.id!);
-    final tenant = await DatabaseHelper.instance.getTenantById(widget.tenant.id!);
-    if (!mounted) return;
-    setState(() {
-      _activities = activities;
-      _completedIds = completed;
-      _currentPoints = tenant?.totalPoints ?? _currentPoints;
-    });
+    final tenantId = widget.tenant.id;
+    if (tenantId == null) return;
+    try {
+      // DEFECT FIX (C2): three independent reads that used to run one after
+      // another, tripling the wait on every refresh. `Future.wait` keeps
+      // results in argument order, so the casts below stay type-safe.
+      final results = await Future.wait<Object?>([
+        DatabaseHelper.instance.getActivities(),
+        DatabaseHelper.instance.getCompletedActivityIds(tenantId),
+        DatabaseHelper.instance.getTenantById(tenantId),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _activities = results[0] as List<EcoActivity>;
+        _completedIds = results[1] as Set<int>;
+        _currentPoints =
+            (results[2] as Tenant?)?.totalPoints ?? _currentPoints;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): no error path existed at all.
+      debugPrint('Tenant activities load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
   Future<void> _complete(EcoActivity activity) async {
     setState(() => _busyActivityId = activity.id);
     final pointsBefore = _currentPoints;
-    final error =
-        await DatabaseHelper.instance.completeActivity(widget.tenant.id!, activity);
+
+    final String? error;
+    try {
+      error = await DatabaseHelper.instance
+          .completeActivity(widget.tenant.id!, activity);
+    } catch (thrown, stackTrace) {
+      // DEFECT FIX (B2): `completeActivity` runs a multi-statement transaction
+      // and can throw. With no catch, `_busyActivityId` was never cleared, so
+      // that one activity's button spun forever and stayed unpressable for the
+      // rest of the session - and the tenant saw no message at all.
+      debugPrint('Complete activity failed: $thrown\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _busyActivityId = null);
+      showErrorSnack(context, 'Could not complete that activity. Please retry.');
+      return;
+    }
+
     if (!mounted) return;
     setState(() => _busyActivityId = null);
     if (error != null) {
@@ -91,7 +126,14 @@ class _TenantActivitiesScreenState extends State<TenantActivitiesScreen> {
           ),
         ),
       ),
-      body: _activities.isEmpty
+      body: _loadFailed
+          ? ErrorState(
+              title: 'Activities could not be loaded',
+              subtitle: 'Your activity list could not be read from the local '
+                  'database. Please try again.',
+              onRetry: _load,
+            )
+          : _activities.isEmpty
           ? const EmptyState(
               icon: Icons.directions_run,
               title: 'No activities yet',
@@ -114,7 +156,7 @@ class _TenantActivitiesScreenState extends State<TenantActivitiesScreen> {
                         CircleAvatar(
                           backgroundColor:
                               (locked ? AppColors.textMuted : AppColors.primary)
-                                  .withValues(alpha: 0.12),
+                                  .withValues(alpha: AppColors.iconTintAlpha),
                           child: Icon(iconFor(a.icon),
                               color: locked
                                   ? AppColors.textMuted
@@ -136,36 +178,20 @@ class _TenantActivitiesScreenState extends State<TenantActivitiesScreen> {
                                       fontSize: 12.5,
                                       color: AppColors.textMuted)),
                               const SizedBox(height: 6),
+                              // DEFECT FIX: these two pills were hand-rolled
+                              // copies of `EcoPill`, and the copy had drifted -
+                              // it painted 10.5px primary text on a primary
+                              // tint at alpha 0.12, which measures 4.36:1 and
+                              // fails the 4.5:1 AA floor. `EcoPill` uses
+                              // AppColors.textTintAlpha (0.08 -> 4.63:1), so
+                              // using the shared widget fixes the contrast and
+                              // removes the duplicate markup at the same time.
                               Row(children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                      color: AppColors.primary
-                                          .withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(20)),
-                                  child: Text('+${a.points} pts',
-                                      style: const TextStyle(
-                                          fontSize: 10.5,
-                                          color: AppColors.primary,
-                                          fontWeight: FontWeight.w600)),
-                                ),
+                                EcoPill('+${a.points} pts'),
                                 if (!a.repeatable) ...[
                                   const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 3),
-                                    decoration: BoxDecoration(
-                                        color: AppColors.textMuted
-                                            .withValues(alpha: 0.12),
-                                        borderRadius:
-                                            BorderRadius.circular(20)),
-                                    child: const Text('One-time',
-                                        style: TextStyle(
-                                            fontSize: 10.5,
-                                            color: AppColors.textMuted,
-                                            fontWeight: FontWeight.w600)),
-                                  ),
+                                  const EcoPill('One-time',
+                                      color: AppColors.textMuted),
                                 ],
                               ]),
                             ],

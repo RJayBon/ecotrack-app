@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../db/database_helper.dart';
 import '../../models/models.dart';
+import '../../utils/formatters.dart';
 import '../../utils/theme.dart';
 import '../../widgets/common_widgets.dart';
 import 'tenant_notifications_screen.dart';
@@ -10,7 +11,26 @@ import 'tenant_activities_screen.dart';
 class TenantHomeTab extends StatefulWidget {
   final Tenant tenant;
   final VoidCallback onChanged;
-  const TenantHomeTab({super.key, required this.tenant, required this.onChanged});
+
+  /// Switches the parent bottom-navigation tab to [index]
+  /// (0 Home · 1 Learn · 2 Activities · 3 Rewards · 4 Profile).
+  ///
+  /// DEFECT FIX (E8): the Quick Access cards used to `Navigator.push` fresh
+  /// copies of `TenantLearnScreen` and `TenantActivitiesScreen` - screens that
+  /// are *already* alive inside `TenantHomeScreen`'s `IndexedStack`. That put a
+  /// second, independently loaded instance of the same screen on top of the one
+  /// the user was trying to reach, duplicated every database read, and left the
+  /// bottom nav still highlighting "Home" while a pushed page covered it. The
+  /// cards now switch tabs. Null (e.g. if this tab is ever hosted outside the
+  /// shell) falls back to the old push behaviour.
+  final ValueChanged<int>? onNavigate;
+
+  const TenantHomeTab({
+    super.key,
+    required this.tenant,
+    required this.onChanged,
+    this.onNavigate,
+  });
 
   @override
   State<TenantHomeTab> createState() => _TenantHomeTabState();
@@ -73,6 +93,17 @@ class _TenantHomeTabState extends State<TenantHomeTab> {
     }
   }
 
+  /// Switches to [tabIndex] via the parent shell, or pushes [route] as a
+  /// fallback when this tab is hosted outside `TenantHomeScreen`.
+  void _goTo(int tabIndex, WidgetBuilder route) {
+    final nav = widget.onNavigate;
+    if (nav != null) {
+      nav(tabIndex);
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: route));
+  }
+
   @override
   Widget build(BuildContext context) {
     final tenant = widget.tenant;
@@ -101,8 +132,15 @@ class _TenantHomeTabState extends State<TenantHomeTab> {
                   top: 8,
                   child: Container(
                     padding: const EdgeInsets.all(3),
+                    // DEFECT FIX (D2): was Colors.redAccent (#FF5252), which
+                    // gave the white 9px count a contrast ratio of 3.19:1 -
+                    // under the 4.5:1 AA floor this app holds everywhere else,
+                    // and 9px is the smallest text in the app, so it is the
+                    // worst place to be spending contrast.
+                    // AppColors.danger (#C62828) gives 5.62:1 and is already
+                    // the palette's alert colour.
                     decoration: const BoxDecoration(
-                        color: Colors.redAccent, shape: BoxShape.circle),
+                        color: AppColors.danger, shape: BoxShape.circle),
                     constraints:
                         const BoxConstraints(minWidth: 16, minHeight: 16),
                     child: Text('$_unread',
@@ -121,7 +159,10 @@ class _TenantHomeTabState extends State<TenantHomeTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Welcome back, ${tenant.name.split(' ').first}! 🌱',
+            // `firstName()` instead of a bare `name.split(' ').first`: the
+            // inline version throws on an empty name and silently renders an
+            // empty greeting on a name that is only whitespace.
+            Text('Welcome back, ${firstName(tenant.name)}! 🌱',
                 style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
@@ -256,10 +297,10 @@ class _TenantHomeTabState extends State<TenantHomeTab> {
               children: [
                 Expanded(
                   child: EcoCard(
-                    onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const TenantLearnScreen())),
+                    // Tab 1 - Learn. Already alive in the IndexedStack, so
+                    // switch to it rather than pushing a second copy.
+                    onTap: () =>
+                        _goTo(1, (_) => const TenantLearnScreen()),
                     child: const Column(
                       children: [
                         Icon(Icons.menu_book,
@@ -275,15 +316,13 @@ class _TenantHomeTabState extends State<TenantHomeTab> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: EcoCard(
-                    onTap: () async {
-                      await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => TenantActivitiesScreen(
-                                  tenant: tenant,
-                                  onChanged: widget.onChanged)));
-                      await _load();
-                    },
+                    // Tab 2 - Activities. The parent shell already reloads the
+                    // tenant record when the tab changes, so there is no need
+                    // to push a duplicate screen and re-read it here.
+                    onTap: () => _goTo(
+                        2,
+                        (_) => TenantActivitiesScreen(
+                            tenant: tenant, onChanged: widget.onChanged)),
                     child: const Column(
                       children: [
                         Icon(Icons.directions_run,

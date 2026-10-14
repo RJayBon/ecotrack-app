@@ -16,6 +16,9 @@ class AdminNotificationsScreen extends StatefulWidget {
 class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
   List<Map<String, dynamic>> _sent = [];
 
+  /// True when the last load threw - see `_AdminActivitiesScreenState`.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -23,9 +26,18 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
   }
 
   Future<void> _load() async {
-    final list = await DatabaseHelper.instance.getAllNotificationsAdmin();
-    if (!mounted) return;
-    setState(() => _sent = list);
+    try {
+      final list = await DatabaseHelper.instance.getAllNotificationsAdmin();
+      if (!mounted) return;
+      setState(() {
+        _sent = list;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Notification list load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
   Future<void> _openCompose() async {
@@ -47,7 +59,14 @@ class _AdminNotificationsScreenState extends State<AdminNotificationsScreen> {
         icon: const Icon(Icons.send),
         label: const Text('Send Notification'),
       ),
-      body: _sent.isEmpty
+      body: _loadFailed
+          ? ErrorState(
+              title: 'Notifications could not be loaded',
+              subtitle: 'The sent list could not be read from the local '
+                  'database. Please try again.',
+              onRetry: _load,
+            )
+          : _sent.isEmpty
           ? EmptyState(
               icon: Icons.notifications_outlined,
               title: 'No notifications sent',
@@ -124,6 +143,11 @@ class _ComposeNotificationSheetState
   bool _saving = false;
   bool _loadingTenants = true;
 
+  /// Distinguishes "the tenant list could not be read" from "there are no
+  /// tenants", which previously both rendered as "No tenants available." -
+  /// telling the admin to give up rather than retry.
+  bool _tenantsLoadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -138,12 +162,24 @@ class _ComposeNotificationSheetState
   }
 
   Future<void> _loadTenants() async {
-    final list = await DatabaseHelper.instance.getTenants();
-    if (!mounted) return;
-    setState(() {
-      _tenants = list;
-      _loadingTenants = false;
-    });
+    try {
+      final list = await DatabaseHelper.instance.getTenants();
+      if (!mounted) return;
+      setState(() {
+        _tenants = list;
+        _loadingTenants = false;
+        _tenantsLoadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): a failed read left `_loadingTenants` true forever, so
+      // the picker showed a permanent "Loading tenants..." with no retry.
+      debugPrint('Compose tenant list load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() {
+        _loadingTenants = false;
+        _tenantsLoadFailed = true;
+      });
+    }
   }
 
   Future<void> _send() async {
@@ -156,34 +192,50 @@ class _ComposeNotificationSheetState
       return;
     }
 
-    List<int> tenantIds;
-    if (_target == 'all') {
-      tenantIds = await DatabaseHelper.instance.getAllTenantIds();
-    } else if (_target == 'active') {
-      tenantIds = await DatabaseHelper.instance.getAllTenantIds(activeOnly: true);
-    } else {
-      tenantIds = _selected.toList();
-    }
-
-    // Guard: after the async gap(s) above, `context` may be stale.
-    if (!mounted) return;
-
-    if (tenantIds.isEmpty) {
-      showErrorSnack(context, 'No recipients match the selected target.');
-      return;
-    }
-
     setState(() => _saving = true);
-    await DatabaseHelper.instance.sendNotification(
-      title: _titleCtrl.text.trim(),
-      message: _messageCtrl.text.trim(),
-      sender: 'Admin',
-      tenantIds: tenantIds,
-    );
-    if (!mounted) return;
-    showSuccessSnack(
-        context, 'Notification sent to ${tenantIds.length} tenant(s).');
-    Navigator.pop(context, true);
+
+    try {
+      final List<int> tenantIds;
+      if (_target == 'all') {
+        tenantIds = await DatabaseHelper.instance.getAllTenantIds();
+      } else if (_target == 'active') {
+        tenantIds =
+            await DatabaseHelper.instance.getAllTenantIds(activeOnly: true);
+      } else {
+        tenantIds = _selected.toList();
+      }
+
+      // Guard: after the async gap(s) above, `context` may be stale.
+      if (!mounted) return;
+
+      if (tenantIds.isEmpty) {
+        setState(() => _saving = false);
+        showErrorSnack(context, 'No recipients match the selected target.');
+        return;
+      }
+
+      await DatabaseHelper.instance.sendNotification(
+        title: _titleCtrl.text.trim(),
+        message: _messageCtrl.text.trim(),
+        sender: 'Admin',
+        tenantIds: tenantIds,
+      );
+      if (!mounted) return;
+      showSuccessSnack(
+          context, 'Notification sent to ${tenantIds.length} tenant(s).');
+      Navigator.pop(context, true);
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): a failure anywhere above left `_saving` true, so the
+      // button was stuck on "Sending..." forever and the sheet could only be
+      // swiped away - with the admin left guessing whether a broadcast to
+      // every tenant had actually gone out. Note the busy flag is now set
+      // *before* the recipient queries too, so they cannot be re-tapped while
+      // in flight.
+      debugPrint('Send notification failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not send the notification.');
+    }
   }
 
   @override
@@ -204,14 +256,9 @@ class _ComposeNotificationSheetState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2))),
-                ),
+                // DEFECT FIX (E2): shared SheetHandle, using the vetted
+                // AppColors.cardBorder instead of raw grey.shade300.
+                const SheetHandle(),
                 const SizedBox(height: 16),
                 const Text('Send Notification',
                     style: TextStyle(
@@ -255,6 +302,22 @@ class _ComposeNotificationSheetState
                     const Padding(
                         padding: EdgeInsets.all(8),
                         child: Text('Loading tenants...'))
+                  else if (_tenantsLoadFailed)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Row(children: [
+                        const Expanded(
+                          child: Text(
+                              'The tenant list could not be loaded.',
+                              style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: AppColors.textMuted)),
+                        ),
+                        TextButton(
+                            onPressed: _loadTenants,
+                            child: const Text('Retry')),
+                      ]),
+                    )
                   else if (_tenants.isEmpty)
                     const Padding(
                         padding: EdgeInsets.all(8),
@@ -263,7 +326,7 @@ class _ComposeNotificationSheetState
                     Container(
                       constraints: const BoxConstraints(maxHeight: 220),
                       decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
+                          border: Border.all(color: AppColors.cardBorder),
                           borderRadius: BorderRadius.circular(12)),
                       child: ListView(
                         shrinkWrap: true,

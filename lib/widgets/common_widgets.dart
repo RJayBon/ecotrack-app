@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../db/database_helper.dart';
 import '../utils/icon_map.dart';
 import '../utils/theme.dart';
 
@@ -68,7 +69,7 @@ class StatTile extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
+              color: color.withValues(alpha: AppColors.iconTintAlpha),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, color: color, size: 22),
@@ -100,9 +101,11 @@ class StatTile extends StatelessWidget {
 /// Small rounded metadata label ("+20 pts", "Unlimited", "One-time", ...).
 ///
 /// Replaces the near-identical private `_pill` helpers that used to live in
-/// the admin activities and rewards screens. The background tint is 8% rather
-/// than 12% so the label text clears WCAG AA against its own tint
-/// (primary 4.63:1, danger 4.96:1) instead of landing just short at 4.36:1.
+/// the admin activities and rewards screens.
+///
+/// The tint is [AppColors.textTintAlpha] (8%) rather than 12% so the label text
+/// clears WCAG AA against its own tint: primary 4.63:1, danger 4.96:1, accent
+/// 5.87:1, textMuted 4.80:1. At 12% primary lands at 4.36:1 - just short.
 class EcoPill extends StatelessWidget {
   final String text;
   final Color color;
@@ -114,7 +117,7 @@ class EcoPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: AppColors.textTintAlpha),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -197,7 +200,7 @@ class EmptyState extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.08),
+                color: AppColors.primary.withValues(alpha: AppColors.textTintAlpha),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, size: 40, color: AppColors.primary),
@@ -257,7 +260,7 @@ class ErrorState extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppColors.danger.withValues(alpha: 0.08),
+                color: AppColors.danger.withValues(alpha: AppColors.textTintAlpha),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.error_outline,
@@ -354,6 +357,12 @@ void showErrorSnack(BuildContext context, String message) {
 }
 
 /// Status pill used in tenant lists (active/inactive).
+///
+/// The tint is [AppColors.textTintAlpha] (8%), not 10%: the label is 12px
+/// normal-weight-equivalent text, so it needs 4.5:1. Primary on its own 10%
+/// tint measures 4.49:1 - a 0.01 AA failure that only shows up once you
+/// actually compute it. At 8% it is 4.63:1, and textMuted on its own 8% tint
+/// is 4.80:1.
 class StatusBadge extends StatelessWidget {
   final String status;
   const StatusBadge({super.key, required this.status});
@@ -365,7 +374,7 @@ class StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
+        color: color.withValues(alpha: AppColors.textTintAlpha),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -417,4 +426,160 @@ class LabeledField extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The little grab handle at the top of every modal bottom sheet.
+///
+/// Extracted because the same 40x4 pill was hand-written in six sheets, four
+/// of which used raw `Colors.grey.shade300` and two of which used the vetted
+/// [AppColors.cardBorder]. Wrapped in [Center] on purpose: every sheet puts
+/// this inside a `CrossAxisAlignment.stretch` column, and without the `Center`
+/// the tight cross-axis constraint would override `width: 40` and draw a
+/// full-width bar (the bug `AdminSetupScreen`'s logo had).
+class SheetHandle extends StatelessWidget {
+  const SheetHandle({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 40,
+        height: 4,
+        decoration: BoxDecoration(
+          color: AppColors.cardBorder,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared "Change Password" bottom sheet for both the admin and tenant
+/// profile screens.
+///
+/// This used to exist twice, verbatim, in `admin_profile_screen.dart` and
+/// `tenant_profile_screen.dart` (~106 lines each), which meant every fix had to
+/// be applied twice - and indeed both copies shipped the same two defects:
+///
+///  * no `try`/`catch`, so a database error left the button spinning forever;
+///  * no error path at all for a thrown exception.
+///
+/// Both are fixed here once.
+class ChangePasswordSheet extends StatefulWidget {
+  final int userId;
+  const ChangePasswordSheet({super.key, required this.userId});
+
+  @override
+  State<ChangePasswordSheet> createState() => _ChangePasswordSheetState();
+}
+
+class _ChangePasswordSheetState extends State<ChangePasswordSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _currentCtrl = TextEditingController();
+  final _newCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _currentCtrl.dispose();
+    _newCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      final ok = await DatabaseHelper.instance
+          .changePassword(widget.userId, _currentCtrl.text, _newCtrl.text);
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => _saving = false);
+        showErrorSnack(context, 'Current password is incorrect.');
+        return;
+      }
+      showSuccessSnack(context, 'Password changed successfully.');
+      Navigator.pop(context);
+    } catch (error, stackTrace) {
+      // Without this the button spun forever and the sheet could only be
+      // dismissed by swiping it away, with no explanation.
+      debugPrint('Change password failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not change the password. Please try again.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SheetHandle(),
+              const SizedBox(height: 16),
+              const Text('Change Password',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              LabeledField(
+                  label: 'Current password',
+                  controller: _currentCtrl,
+                  obscure: true,
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Required' : null),
+              LabeledField(
+                  label: 'New password',
+                  controller: _newCtrl,
+                  obscure: true,
+                  validator: (v) =>
+                      (v == null || v.length < 6) ? 'Min 6 characters' : null),
+              LabeledField(
+                  label: 'Confirm new password',
+                  controller: _confirmCtrl,
+                  obscure: true,
+                  validator: (v) =>
+                      v != _newCtrl.text ? 'Passwords do not match' : null),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _saving ? null : _submit,
+                child: _saving
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Update Password'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Presents [ChangePasswordSheet]. Kept as a helper so neither profile screen
+/// has to repeat the sheet's presentation options.
+Future<void> showChangePasswordSheet(
+  BuildContext context, {
+  required int userId,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => ChangePasswordSheet(userId: userId),
+  );
 }

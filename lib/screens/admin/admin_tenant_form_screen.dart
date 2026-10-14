@@ -64,8 +64,15 @@ class _AdminTenantFormScreenState extends State<AdminTenantFormScreen> {
       } else {
         final exists = await DatabaseHelper.instance.usernameExists(_usernameCtrl.text.trim());
         if (exists) {
+          // DEFECT FIX (B3): the mounted guard was on the wrong statement.
+          // `usernameExists` is awaited above, so this route can already have
+          // been popped by the time it resolves - the snackbar was guarded but
+          // this `setState` was not, which threw
+          // "setState() called after dispose()" when the admin backed out
+          // mid-query. Guard both.
+          if (!mounted) return;
           setState(() => _saving = false);
-          if (mounted) showErrorSnack(context, 'Username already taken.');
+          showErrorSnack(context, 'Username already taken.');
           return;
         }
         await DatabaseHelper.instance.createTenant(

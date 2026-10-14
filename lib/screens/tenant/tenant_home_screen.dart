@@ -54,6 +54,14 @@ class _TenantHomeScreenState extends State<TenantHomeScreen> {
 
   void _onTenantChanged() => _load();
 
+  /// Switches the bottom-navigation tab. Passed down to `TenantHomeTab` so its
+  /// Quick Access cards move between the *existing* tabs instead of pushing
+  /// duplicate copies of screens this shell already hosts.
+  void _goToTab(int i) {
+    setState(() => _index = i);
+    _load();
+  }
+
   Future<void> _signOut() async {
     await Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -85,7 +93,8 @@ class _TenantHomeScreenState extends State<TenantHomeScreen> {
     }
 
     final tabs = [
-      TenantHomeTab(tenant: tenant, onChanged: _onTenantChanged),
+      TenantHomeTab(
+          tenant: tenant, onChanged: _onTenantChanged, onNavigate: _goToTab),
       const TenantLearnScreen(),
       TenantActivitiesScreen(tenant: tenant, onChanged: _onTenantChanged),
       TenantRewardsScreen(tenant: tenant, onChanged: _onTenantChanged),
@@ -95,10 +104,7 @@ class _TenantHomeScreenState extends State<TenantHomeScreen> {
       body: IndexedStack(index: _index, children: tabs),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) {
-          setState(() => _index = i);
-          _load();
-        },
+        onTap: _goToTab,
         items: const [
           BottomNavigationBarItem(
               icon: Icon(Icons.home_outlined),

@@ -13,6 +13,14 @@ import 'password_hasher.dart';
 const String kLedgerUsername = '__ecotrack_ledger__';
 const String kLedgerTenantName = '__ecotrack_ledger__';
 
+/// Message returned by [DatabaseHelper.completeActivity] and
+/// [DatabaseHelper.redeemReward] when the tenant's account is `inactive`.
+///
+/// Top-level (not private) so the login screen and the tenant screens can show
+/// the exact same wording instead of each inventing their own.
+const String kTenantDeactivatedMessage =
+    'This account has been deactivated. Contact your administrator.';
+
 /// Central SQLite access layer for EcoTrack.
 ///
 /// Owns schema creation, migrations, seeding of reference content (guides,
@@ -385,8 +393,9 @@ class DatabaseHelper {
       },
     ];
     // Seeding runs once, before the first frame, so it sits on the app's
-    // critical start-up path. All 31 rows go through one batch instead of
-    // one round trip per row.
+    // critical start-up path. All 26 rows (5 guides + 6 activities + 5
+    // rewards + 10 quotes - the exact counts test/database_helper_test.dart
+    // asserts) go through one batch instead of one round trip per row.
     final batch = db.batch();
     for (final g in guides) {
       batch.insert('waste_guides', {...g, 'created_at': now});
@@ -493,16 +502,55 @@ class DatabaseHelper {
     }
 
     final quotes = [
-      {'quote_text': 'The earth does not belong to us; we belong to the earth.', 'author': 'Marlee Matlin'},
-      {'quote_text': 'We do not inherit the earth from our ancestors; we borrow it from our children.', 'author': 'Native American Proverb'},
-      {'quote_text': 'The greatest threat to our planet is the belief that someone else will save it.', 'author': 'Robert Swan'},
-      {'quote_text': 'Reduce, reuse, recycle — in that order.', 'author': 'EcoTrack'},
-      {'quote_text': 'Small acts, when multiplied by millions of people, can transform the world.', 'author': 'Howard Zinn'},
-      {'quote_text': 'There is no such thing as away. When we throw anything away, it must go somewhere.', 'author': 'Annie Leonard'},
-      {'quote_text': 'What we do to the environment, we do to ourselves.', 'author': 'Unknown'},
-      {'quote_text': 'Every piece of plastic you refuse today is one less in the ocean tomorrow.', 'author': 'EcoTrack'},
-      {'quote_text': 'Nature provides a free lunch, but only if we control our appetites.', 'author': 'William Ruckelshaus'},
-      {'quote_text': 'A society grows great when people plant trees whose shade they know they shall never sit in.', 'author': 'Greek Proverb'},
+      {
+        'quote_text':
+          'The earth does not belong to us; we belong to the earth.',
+        'author': 'Marlee Matlin',
+      },
+      {
+        'quote_text':
+          'We do not inherit the earth from our ancestors; we borrow it from our children.',
+        'author': 'Native American Proverb',
+      },
+      {
+        'quote_text':
+          'The greatest threat to our planet is the belief that someone else will save it.',
+        'author': 'Robert Swan',
+      },
+      {
+        'quote_text': 'Reduce, reuse, recycle — in that order.',
+        'author': 'EcoTrack',
+      },
+      {
+        'quote_text':
+          'Small acts, when multiplied by millions of people, can transform the world.',
+        'author': 'Howard Zinn',
+      },
+      {
+        'quote_text':
+          'There is no such thing as away. When we throw anything away, it must go somewhere.',
+        'author': 'Annie Leonard',
+      },
+      {
+        'quote_text':
+          'What we do to the environment, we do to ourselves.',
+        'author': 'Unknown',
+      },
+      {
+        'quote_text':
+          'Every piece of plastic you refuse today is one less in the ocean tomorrow.',
+        'author': 'EcoTrack',
+      },
+      {
+        'quote_text':
+          'Nature provides a free lunch, but only if we control our appetites.',
+        'author': 'William Ruckelshaus',
+      },
+      {
+        'quote_text':
+          'A society grows great when people plant trees whose shade they know they shall never sit in.',
+        'author': 'Greek Proverb',
+      },
     ];
     for (final q in quotes) {
       batch.insert('environmental_quotes', {...q, 'created_at': now});
@@ -982,9 +1030,9 @@ class DatabaseHelper {
   }
 
   /// Completes an activity for a tenant inside a single transaction:
-  /// validates that the activity still exists and is not archived, re-reads
-  /// its current point value, enforces the repeat rule, records the
-  /// completion and updates the tenant's balance.
+  /// validates that the tenant is still active, that the activity still exists
+  /// and is not archived, re-reads its current point value, enforces the
+  /// repeat rule, records the completion and updates the tenant's balance.
   ///
   /// Returns null on success, or a user-facing error message on failure.
   Future<String?> completeActivity(int tenantId, EcoActivity activity) async {
@@ -993,6 +1041,19 @@ class DatabaseHelper {
 
     final db = await database;
     return db.transaction<String?>((txn) async {
+      // Deactivation has to bite immediately, not at the next login. The login
+      // screen refuses an `inactive` tenant, but a session that was already
+      // open never re-read `status`, so an admin deactivating someone had no
+      // effect until that person happened to log out - they could keep earning
+      // points the whole time. Checked inside the transaction so it cannot race
+      // a concurrent `setTenantStatus`.
+      final tenantRows = await txn.query('tenants',
+          columns: ['status'], where: 'id = ?', whereArgs: [tenantId], limit: 1);
+      if (tenantRows.isEmpty) return 'Your account could not be found.';
+      if (tenantRows.first['status'] != 'active') {
+        return kTenantDeactivatedMessage;
+      }
+
       // Read the authoritative row inside the transaction rather than
       // trusting the copy the UI captured when the list was built: an admin
       // may have archived it, deleted it or changed its point value since.
@@ -1087,8 +1148,9 @@ class DatabaseHelper {
   }
 
   /// Redeems a reward for a tenant inside a single transaction: re-reads the
-  /// reward and the tenant's balance, enforces the points and stock rules,
-  /// then debits the balance, decrements the stock and records the redemption.
+  /// reward, the tenant's balance and the tenant's status, enforces the
+  /// points and stock rules, then debits the balance, decrements the stock and
+  /// records the redemption.
   ///
   /// Returns null on success, or a user-facing error message on failure.
   Future<String?> redeemReward(int tenantId, Reward reward) async {
@@ -1099,6 +1161,10 @@ class DatabaseHelper {
     return db.transaction<String?>((txn) async {
       final tenantRows = await txn.query('tenants', where: 'id = ?', whereArgs: [tenantId]);
       if (tenantRows.isEmpty) return 'Tenant not found.';
+      // See completeActivity: deactivation must take effect mid-session.
+      if (tenantRows.first['status'] != 'active') {
+        return kTenantDeactivatedMessage;
+      }
       final currentPoints = tenantRows.first['total_points'] as int;
 
       final rewardRows = await txn.query('rewards',

@@ -24,6 +24,19 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
   int _currentPoints = 0;
   int? _busyRewardId;
 
+  /// True when the last load threw - see the same field in
+  /// `_TenantActivitiesScreenState`.
+  bool _loadFailed = false;
+
+  /// DEFECT FIX (C1): `getRedemptionHistory` was called with no limit, so the
+  /// History tab materialised every redemption this tenant has ever made into
+  /// Dart objects on *every* refresh (and after every redemption). A long-lived
+  /// account turns that into an ever-growing cost paid to render a screen the
+  /// user can only scroll through a page at a time. History is now fetched one
+  /// page at a time and extended on demand.
+  static const int _historyPageSize = 50;
+  int _historyLimit = _historyPageSize;
+
   @override
   void initState() {
     super.initState();
@@ -51,22 +64,54 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
   }
 
   Future<void> _load() async {
-    final rewards = await DatabaseHelper.instance.getRewards(activeOnly: true);
-    final history =
-        await DatabaseHelper.instance.getRedemptionHistory(widget.tenant.id!);
-    final tenant = await DatabaseHelper.instance.getTenantById(widget.tenant.id!);
-    if (!mounted) return;
-    setState(() {
-      _rewards = rewards;
-      _history = history;
-      _currentPoints = tenant?.totalPoints ?? _currentPoints;
-    });
+    final tenantId = widget.tenant.id;
+    if (tenantId == null) return;
+    try {
+      // DEFECT FIX (C2): three independent reads that used to run one after
+      // another. `Future.wait` keeps results in argument order.
+      final results = await Future.wait<Object?>([
+        DatabaseHelper.instance.getRewards(activeOnly: true),
+        DatabaseHelper.instance
+            .getRedemptionHistory(tenantId, limit: _historyLimit),
+        DatabaseHelper.instance.getTenantById(tenantId),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _rewards = results[0] as List<Reward>;
+        _history = results[1] as List<RewardRedemption>;
+        _currentPoints =
+            (results[2] as Tenant?)?.totalPoints ?? _currentPoints;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B4): no error path existed, so a failed read rendered
+      // "No rewards available" / "No redemptions yet" - indistinguishable from
+      // a genuinely empty catalogue.
+      debugPrint('Tenant rewards load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
+  }
+
+  /// Extends the History tab by one page and reloads.
+  Future<void> _loadMoreHistory() async {
+    setState(() => _historyLimit += _historyPageSize);
+    await _load();
   }
 
   Future<void> _redeem(Reward reward) async {
     // Re-read the reward so the dialog shows the freshest points/stock even
     // if an admin edited it while this screen was open.
-    final freshList = await DatabaseHelper.instance.getRewards(activeOnly: true);
+    final List<Reward> freshList;
+    try {
+      freshList = await DatabaseHelper.instance.getRewards(activeOnly: true);
+    } catch (error, stackTrace) {
+      debugPrint('Pre-redeem reward read failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context,
+          'Could not check the latest price for that reward. Please retry.');
+      return;
+    }
     final fresh = freshList.firstWhere(
       (r) => r.id == reward.id,
       orElse: () => reward,
@@ -81,9 +126,30 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
     );
     if (!confirmed) return;
 
+    // DEFECT FIX (B3): `showConfirmDialog` above awaits, so this State may
+    // already be gone (the tenant can switch tabs, and the shell keeps every
+    // tab alive in an IndexedStack - but the route can still be disposed).
+    // `setState` on a disposed State throws, so re-check `mounted` here; the
+    // guard earlier in this method only covered the *previous* await.
+    if (!mounted) return;
     setState(() => _busyRewardId = reward.id);
-    final error =
-        await DatabaseHelper.instance.redeemReward(widget.tenant.id!, fresh);
+
+    final String? error;
+    try {
+      error =
+          await DatabaseHelper.instance.redeemReward(widget.tenant.id!, fresh);
+    } catch (thrown, stackTrace) {
+      // DEFECT FIX (B2): `redeemReward` runs a transaction that debits points
+      // and decrements stock, and it can throw. With no catch, `_busyRewardId`
+      // was never cleared, so that reward's button spun forever and the tenant
+      // had no way to tell whether their points had been taken.
+      debugPrint('Redeem reward failed: $thrown\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _busyRewardId = null);
+      showErrorSnack(context, 'Could not redeem that reward. Please retry.');
+      return;
+    }
+
     if (!mounted) return;
     setState(() => _busyRewardId = null);
     if (error != null) {
@@ -142,6 +208,14 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
   }
 
   Widget _buildBrowse() {
+    if (_loadFailed) {
+      return ErrorState(
+        title: 'Rewards could not be loaded',
+        subtitle: 'The reward catalogue could not be read from the local '
+            'database. Please try again.',
+        onRetry: _load,
+      );
+    }
     if (_rewards.isEmpty) {
       return const EmptyState(
         icon: Icons.card_giftcard,
@@ -164,8 +238,8 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
             child: Row(
               children: [
                 CircleAvatar(
-                  backgroundColor:
-                      AppColors.warning.withValues(alpha: 0.15),
+                  backgroundColor: AppColors.warning
+                      .withValues(alpha: AppColors.iconTintAlpha),
                   child:
                       Icon(iconFor(r.icon), color: AppColors.warning, size: 20),
                 ),
@@ -197,12 +271,17 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
+                      // DEFECT FIX (D4): the disabled state used raw
+                      // Colors.grey.shade600 on Colors.grey.shade300 = 3.49:1,
+                      // below the 4.5:1 AA floor - and "Locked" / "Out of stock"
+                      // is exactly the label a tenant most needs to read. The
+                      // palette's vetted disabled tokens give 4.84:1.
                       backgroundColor: (canAfford && !outOfStock)
                           ? AppColors.primary
-                          : Colors.grey.shade300,
+                          : AppColors.disabledBackground,
                       foregroundColor: (canAfford && !outOfStock)
                           ? Colors.white
-                          : Colors.grey.shade600,
+                          : AppColors.disabledForeground,
                     ),
                     onPressed: (!canAfford || outOfStock || busy)
                         ? null
@@ -229,6 +308,14 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
   }
 
   Widget _buildHistory() {
+    if (_loadFailed) {
+      return ErrorState(
+        title: 'Redemption history could not be loaded',
+        subtitle: 'Your past redemptions could not be read from the local '
+            'database. Please try again.',
+        onRetry: _load,
+      );
+    }
     if (_history.isEmpty) {
       return const EmptyState(
         icon: Icons.history,
@@ -236,13 +323,25 @@ class _TenantRewardsScreenState extends State<TenantRewardsScreen>
         subtitle: 'Your redeemed rewards will show up here.',
       );
     }
+    // One extra row when a page boundary was hit, so the older redemptions
+    // stay reachable - C1 caps the read, it does not hide data.
+    final hasMore = _history.length >= _historyLimit;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        itemCount: _history.length,
+        itemCount: _history.length + (hasMore ? 1 : 0),
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (context, i) {
+          if (i >= _history.length) {
+            return Center(
+              child: TextButton.icon(
+                onPressed: _loadMoreHistory,
+                icon: const Icon(Icons.history, size: 18),
+                label: const Text('Load earlier redemptions'),
+              ),
+            );
+          }
           final r = _history[i];
           return EcoCard(
             child: Row(

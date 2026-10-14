@@ -19,6 +19,9 @@ class _AdminRewardsScreenState extends State<AdminRewardsScreen> {
   /// auditable. Hidden by default; restorable from here.
   bool _showArchived = false;
 
+  /// True when the last load threw - see `_AdminActivitiesScreenState`.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -26,10 +29,19 @@ class _AdminRewardsScreenState extends State<AdminRewardsScreen> {
   }
 
   Future<void> _load() async {
-    final list = await DatabaseHelper.instance
-        .getRewards(includeArchived: _showArchived);
-    if (!mounted) return;
-    setState(() => _rewards = list);
+    try {
+      final list = await DatabaseHelper.instance
+          .getRewards(includeArchived: _showArchived);
+      if (!mounted) return;
+      setState(() {
+        _rewards = list;
+        _loadFailed = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Reward list load failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadFailed = true);
+    }
   }
 
   Future<void> _openForm({Reward? reward}) async {
@@ -55,17 +67,30 @@ class _AdminRewardsScreenState extends State<AdminRewardsScreen> {
       danger: true,
     );
     if (!confirmed) return;
-    await DatabaseHelper.instance.deleteReward(r.id!);
-    if (!mounted) return;
-    showSuccessSnack(context, 'Reward archived.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.deleteReward(r.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Reward archived.');
+      await _load();
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): see _archive in admin_activities_screen.dart.
+      debugPrint('Archive reward failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not archive the reward.');
+    }
   }
 
   Future<void> _restore(Reward r) async {
-    await DatabaseHelper.instance.restoreReward(r.id!);
-    if (!mounted) return;
-    showSuccessSnack(context, 'Reward restored.');
-    await _load();
+    try {
+      await DatabaseHelper.instance.restoreReward(r.id!);
+      if (!mounted) return;
+      showSuccessSnack(context, 'Reward restored.');
+      await _load();
+    } catch (error, stackTrace) {
+      debugPrint('Restore reward failed: $error\n$stackTrace');
+      if (!mounted) return;
+      showErrorSnack(context, 'Could not restore the reward.');
+    }
   }
 
   @override
@@ -91,7 +116,14 @@ class _AdminRewardsScreenState extends State<AdminRewardsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Add Reward'),
       ),
-      body: _rewards.isEmpty
+      body: _loadFailed
+          ? ErrorState(
+              title: 'Rewards could not be loaded',
+              subtitle: 'The reward catalogue could not be read from the local '
+                  'database. Please try again.',
+              onRetry: _load,
+            )
+          : _rewards.isEmpty
           ? EmptyState(
               icon: Icons.card_giftcard,
               title: _showArchived ? 'Nothing archived' : 'No rewards yet',
@@ -115,82 +147,94 @@ class _AdminRewardsScreenState extends State<AdminRewardsScreen> {
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (context, i) {
                   final r = _rewards[i];
+                  // DEFECT FIX (D3): this row used to be wrapped in
+                  // Opacity(opacity: archived ? 0.65 : 1). Opacity composites
+                  // the whole subtree onto the card; measured against the
+                  // 4.5:1 AA floor that gave 14.5px title 4.79:1 (pass),
+                  // 12.5px description 2.67:1 (fail), '+N pts' pill 2.53:1
+                  // (fail) and 'One-time'/'Archived' pills 2.52:1 (fail). So
+                  // archived rows - the ones an admin reads most carefully
+                  // before deciding to restore - were the least readable rows
+                  // on the screen. Archived state is now carried by colour
+                  // choice instead: textMuted on the white card is 5.34:1 and
+                  // EcoPill at AppColors.textTintAlpha is 4.63:1.
+                  final accent = r.archived ? AppColors.textMuted : AppColors.primary;
                   return EcoCard(
-                    child: Opacity(
-                      opacity: r.archived ? 0.65 : 1,
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor:
-                                AppColors.warning.withValues(alpha: 0.15),
-                            child: Icon(iconFor(r.icon),
-                                color: AppColors.warning, size: 20),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(r.title,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14.5)),
-                                const SizedBox(height: 2),
-                                Text(r.description,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 12.5,
-                                        color: AppColors.textMuted)),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    EcoPill('${r.pointsRequired} pts'),
-                                    EcoPill(
-                                      r.stock < 0 ? 'Unlimited' : '${r.stock} left',
-                                      color: AppColors.textMuted,
-                                    ),
-                                    EcoPill(
-                                      r.active ? 'Visible' : 'Hidden',
-                                      color: r.active
-                                          ? AppColors.accent
-                                          : AppColors.danger,
-                                    ),
-                                    if (r.archived)
-                                      const EcoPill('Archived',
-                                          color: AppColors.textMuted),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: (v) {
-                              if (v == 'edit') {
-                                _openForm(reward: r);
-                              } else if (v == 'restore') {
-                                _restore(r);
-                              } else {
-                                _archive(r);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              if (!r.archived)
-                                const PopupMenuItem(
-                                    value: 'edit', child: Text('Edit')),
-                              if (r.archived)
-                                const PopupMenuItem(
-                                    value: 'restore', child: Text('Restore')),
-                              if (!r.archived)
-                                const PopupMenuItem(
-                                    value: 'archive',
-                                    child: Text('Archive')),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: AppColors.warning
+                              .withValues(alpha: AppColors.iconTintAlpha),
+                          child: Icon(iconFor(r.icon),
+                              color: AppColors.warning, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(r.title,
+                                  style: TextStyle(
+                                      color: r.archived
+                                          ? AppColors.textMuted
+                                          : AppColors.textDark,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14.5)),
+                              const SizedBox(height: 2),
+                              Text(r.description,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 12.5,
+                                      color: AppColors.textMuted)),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  EcoPill('${r.pointsRequired} pts', color: accent),
+                                  EcoPill(
+                                    r.stock < 0 ? 'Unlimited' : '${r.stock} left',
+                                    color: AppColors.textMuted,
+                                  ),
+                                  EcoPill(
+                                    r.active ? 'Visible' : 'Hidden',
+                                    color: r.active
+                                        ? AppColors.accent
+                                        : AppColors.danger,
+                                  ),
+                                  if (r.archived)
+                                    const EcoPill('Archived',
+                                        color: AppColors.textMuted),
+                                ],
+                              ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                        PopupMenuButton<String>(
+                          onSelected: (v) {
+                            if (v == 'edit') {
+                              _openForm(reward: r);
+                            } else if (v == 'restore') {
+                              _restore(r);
+                            } else {
+                              _archive(r);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            if (!r.archived)
+                              const PopupMenuItem(
+                                  value: 'edit', child: Text('Edit')),
+                            if (r.archived)
+                              const PopupMenuItem(
+                                  value: 'restore', child: Text('Restore')),
+                            if (!r.archived)
+                              const PopupMenuItem(
+                                  value: 'archive',
+                                  child: Text('Archive')),
+                          ],
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -258,14 +302,22 @@ class _RewardFormSheetState extends State<_RewardFormSheet> {
       archived: widget.reward?.archived ?? false,
       createdAt: widget.reward?.createdAt ?? '',
     );
-    if (_isEdit) {
-      await DatabaseHelper.instance.updateReward(reward);
-    } else {
-      await DatabaseHelper.instance.insertReward(reward);
+    try {
+      if (_isEdit) {
+        await DatabaseHelper.instance.updateReward(reward);
+      } else {
+        await DatabaseHelper.instance.insertReward(reward);
+      }
+      if (!mounted) return;
+      showSuccessSnack(context, _isEdit ? 'Reward updated.' : 'Reward added.');
+      Navigator.pop(context, true);
+    } catch (error, stackTrace) {
+      // DEFECT FIX (B2): see _ActivityFormSheetState._submit.
+      debugPrint('Save reward failed: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showErrorSnack(context, 'Could not save the reward.');
     }
-    if (!mounted) return;
-    showSuccessSnack(context, _isEdit ? 'Reward updated.' : 'Reward added.');
-    Navigator.pop(context, true);
   }
 
   @override
@@ -283,14 +335,8 @@ class _RewardFormSheetState extends State<_RewardFormSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                          color: AppColors.cardBorder,
-                          borderRadius: BorderRadius.circular(2))),
-                ),
+                // DEFECT FIX (E2): shared SheetHandle.
+                const SheetHandle(),
                 const SizedBox(height: 16),
                 Text(_isEdit ? 'Edit Reward' : 'Add Reward',
                     style: const TextStyle(

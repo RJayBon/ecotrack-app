@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../db/database_helper.dart';
 import '../../models/models.dart';
+import '../../utils/formatters.dart';
 import '../../utils/theme.dart';
 import '../../widgets/common_widgets.dart';
 import 'admin_tenant_form_screen.dart';
@@ -164,16 +165,19 @@ class _AdminTenantsScreenState extends State<AdminTenantsScreen> {
                             children: [
                               CircleAvatar(
                                 radius: 22,
-                                backgroundColor:
-                                    AppColors.primary.withValues(alpha: 0.12),
-                                child: Text(
-                                  t.name.isNotEmpty
-                                      ? t.name[0].toUpperCase()
-                                      : '?',
-                                  style: const TextStyle(
-                                      color: AppColors.primary,
-                                      fontWeight: FontWeight.bold),
-                                ),
+                                // DEFECT FIX (accessibility): the initial is
+                                // bold but default-sized (~14px), so it is NOT
+                                // WCAG "large text" and needs 4.5:1. Primary on
+                                // a primary tint measured 4.36:1 at alpha 0.12.
+                                // textTintAlpha (0.08) gives 4.63:1.
+                                backgroundColor: AppColors.primary
+                                    .withValues(alpha: AppColors.textTintAlpha),
+                                // nameInitial() also guards a whitespace-only
+                                // name, which `name[0]` does not.
+                                child: Text(nameInitial(t.name),
+                                    style: const TextStyle(
+                                        color: AppColors.primary,
+                                        fontWeight: FontWeight.bold)),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -250,7 +254,7 @@ class _AdminTenantsScreenState extends State<AdminTenantsScreen> {
         decoration: BoxDecoration(
           color: AppColors.fieldFill,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey.shade300),
+          border: Border.all(color: AppColors.cardBorder),
         ),
         child: const Row(
           children: [

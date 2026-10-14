@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/models.dart';
+import '../../utils/formatters.dart';
 import '../../utils/theme.dart';
 import '../../widgets/common_widgets.dart';
 import 'admin_activities_screen.dart';
@@ -67,12 +68,10 @@ class AdminMoreScreen extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 26,
-                  backgroundColor:
-                      AppColors.primary.withValues(alpha: 0.12),
-                  child: Text(
-                      admin.name.isNotEmpty
-                          ? admin.name[0].toUpperCase()
-                          : '?',
+                  // textTintAlpha: the initial is text on this wash.
+                  backgroundColor: AppColors.primary
+                      .withValues(alpha: AppColors.textTintAlpha),
+                  child: Text(nameInitial(admin.name),
                       style: const TextStyle(
                           fontSize: 20,
                           color: AppColors.primary,
@@ -106,7 +105,7 @@ class AdminMoreScreen extends StatelessWidget {
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                            color: item.color.withValues(alpha: 0.12),
+                            color: item.color.withValues(alpha: AppColors.iconTintAlpha),
                             borderRadius: BorderRadius.circular(10)),
                         child: Icon(item.icon, color: item.color, size: 20),
                       ),

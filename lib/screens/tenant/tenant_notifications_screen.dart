@@ -170,6 +170,20 @@ class _TenantNotificationsScreenState extends State<TenantNotificationsScreen> {
                           borderRadius: BorderRadius.circular(16)),
                       child: const Icon(Icons.delete, color: Colors.white),
                     ),
+                    // DEFECT FIX (E9): a swipe used to delete the notification
+                    // immediately, with no confirmation and no way back - the
+                    // only destructive action in the app that skipped the
+                    // standard confirm dialog (guides, quotes, activities,
+                    // rewards, tenants and even "mark all read" all ask).
+                    // Returning false from confirmDismiss leaves the row exactly
+                    // where it was; onDismissed then never fires.
+                    confirmDismiss: (_) => showConfirmDialog(
+                      context,
+                      title: 'Delete Notification',
+                      message: 'Delete "${n.title}"? This cannot be undone.',
+                      confirmLabel: 'Delete',
+                      danger: true,
+                    ),
                     onDismissed: (_) => _delete(n),
                     child: EcoCard(
                       onTap: () => _open(n),
